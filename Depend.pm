@@ -28,7 +28,7 @@ use Data::Dumper;
 # package variables
 ########################################################################
 
-our $VERSION = 0.06;
+our $VERSION = 0.07;
 
 # hard-coded defaults used in the constructor (prepare). 
 # these can be overridden in the config file via aliases,
@@ -162,6 +162,9 @@ sub complete
 
 	delete $queued->{$_}{$job} for @{ $depend->{$job} };
 
+	# this isn't quite so expensive as it may look at first
+	# since the can operator's result is cached.
+
 	if( my $cleanup = $que->can('cleanup') )
 	{
 		print "$$: Cleaning up after: $job" if $que->{verbose};
@@ -267,7 +270,11 @@ sub precheck
 	{
 		open my $fh, '<', $pidfile or croak "$$: < $pidfile: $!";
 
-		chomp( my @linz = <$fh> );
+		# we only care about the first 3 lines. non-zero exits
+		# will double-write the same exit status in order to be
+		# sure that the non-zero value gets stored.
+
+		chomp( my @linz = (<$fh>)[0..2] );
 
 		close $fh;
 
@@ -1002,15 +1009,18 @@ sub execute
 					}
 					elsif( defined $pid )
 					{
-						# remember to do this before closing stdout.
+
+						# one problem with closing the file handle
+						# and execing the string is that if our parent
+						# proc gets killed we may not record an exit
+						# status in the pidfile.
+						#
+						# alternative is to print $fh system($string)
+						# and just pass the exit valud up to the parent
+						# for bookkeeping purposes only.
 
 						print "$$: Executing: $job ($run)\n"
 							if $print_detail;
-
-						# child never reaches the point where this is
-						# closed in the main loop.
-
-						close $fh;
 
 						# Note: make sure to exit w/in this block to
 						# avoid forkatosis. the exec is effectively
@@ -1034,11 +1044,20 @@ sub execute
 						open STDOUT, '>', $outpath or croak "$outpath: $!";
 						open STDERR, '>', $errpath or croak "$errpath: $!";
 
-						# do the deed or die trying...
+						# do the deed, writing the exit status to the
+						# job's pidfile handle. the parent gets back 
+						# the exit status. we have to store $? since 
+						# writing the pidfile could cause a system error
+						# (e.g., if someone accidentally used fcntl to 
+						# lock it in the meantime).
 
-						exec $run;
+						system( $run ); 
 
-						die "\n$$: Failed exec for $job: $!\n";
+						my $exit = $?;
+
+						print $fh $?;
+
+						exit $exit
 					}
 					else
 					{
@@ -1069,7 +1088,8 @@ sub execute
 			# better have some jobs outstanding in the background
 			# or the queue is deadlocked.
 
-			print STDERR "\n$$: Deadlocked schedule: neither runnable nor pending jobs.\n";
+			print STDERR
+				"\n$$: Deadlocked schedule: neither running nor pending jobs.\n";
 
 			$que->{abort} = 1;
 		}
@@ -1094,12 +1114,22 @@ sub execute
 		# have been removed this should never hit an undefined 
 		# sub-hash in %queued.
 		#
-		# if there are no outstanding jobs then this will immediately
-		# return -1 and we won't block.
+		# if there are no outstanding jobs then this will
+		# immediately return -1 and we won't block. at that point
+		# queued-job logic will decide if the queue is deadlocked
+		# or not.
+		# 
+		# if the job exited non-zero then we have to re-open the
+		# file and make sure that the exit status got written since
+		# our child may have been zapped along with the queued
+		# job's proc.
+
 
 		if( (my $pid = wait) > 0 )
 		{
 			my $status = $?;
+
+			$que->{abort} ||= $status;
 
 			my $job = $jobz->{$pid}
 				or die "$$: unknown pid $pid";
@@ -1107,14 +1137,17 @@ sub execute
 			print "$$: Exit: $job ($pid) $status\t$que->{pidz}{$job}\n"
 				if $print_detail;
 
-			open my $fh, '>>',  $que->{pidz}{$job}
-				or croak "$que->{pidz}{$job}: $!";
+			if( $status )
+			{
+				open my $fh, '>>',  $que->{pidz}{$job}
+					or croak "$que->{pidz}{$job}: $!";
 
-			print $fh $status;
+				print $fh $status;
 
-			close $fh;
+				close $fh;
+			}
 
-			$que->{abort} ||= $status;
+			# deal with screen messages.
 
 			if( my $exit = $status >> 8 )
 			{

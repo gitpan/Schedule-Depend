@@ -1,4 +1,19 @@
+
 Revision history for Perl extension Schedule::Depend.
+
+0.07
+
+	Revised exit status writing. The child uses
+	system instead of exec and writes $? to its
+	own pidfile; the parent writes $? to the pidfile
+	if it is non-zero. This allows either the parent
+	or child to get zapped by a signal, leave the
+	other running and correctly record the status.
+	It also means that the pidfiles may be 4 lines
+	long on failure. Fix there is to read [0..2]
+	to check the status on the way in for restarts.
+
+	Updated comments to reflect reality a bit better.
 
 0.06
 

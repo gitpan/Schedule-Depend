@@ -1,0 +1,17 @@
+Revision history for Perl extension Schedule::Depend.
+
+0.01  Wed Feb  6 10:20:32 2002
+	Beta
+
+0.02  Wed Feb  6 17:25:02 CST 2002
+	Release-able version.
+
+0.02 Wed Feb 27 12:20:18 CST 2002
+	Doc updates.
+
+	debug uses copy of queue, doesn't consume original
+	object during debug.
+
+	Added "debug" as standard alias for running in 
+	debug mode. Simplifies checking new schedules.
+

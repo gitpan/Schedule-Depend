@@ -1,5 +1,6 @@
 Changes
 MANIFEST
 Makefile.PL
-test.pl
+README
 lib/Schedule/Depend.pm
+test.pl

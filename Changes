@@ -1,6 +1,39 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+0.30 Mon Nov  4 17:11:56 CST 2002
+
+ -	Schedule::Depend::subque can also handle a hash referent
+ 	as the schedule object.
+
+ -	ref $_[0] eq 'ARRAY' allows passing the queue in as an 
+ 	array referent. Doesn't allow for blessed arrays, however, 
+	which should stringify into the schedule.
+
+ - 	added "ttylog" to avoid re-opening STDERR/STDOUT to .out
+ 	and .err files. This puts everything from the scheule onto
+	the tty. Mainly useful for debugging or where network 
+	interfaces might get cut off if there isn't any activitiy
+	on the connection for too long.
+
+ -	ttylog mode does not overwrite any existing log files
+ 	(or create new ones). This avoids creating a directory
+	full of empty logs or overwriting valid ones during 
+	a test run.
+
+ -	Replaced the top-level que attributes (verbose, ttylog,
+ 	force, ...) with $que->{attrib}. This is the single unit
+	of inherited data for sub-queues.
+
+ -	Added $que->{user} as inherited piece of sub-queues along
+ 	with $que->{attrib}. The "user" entry is not managed in any
+	other way by by S::D can be used to store information carried
+	into sub-qeues, blessed, whatever.
+
+ -	Minor internal bugfixes.
+
+ -	Updated test.pl to handle new que syntax.
+
 0.29 Thu Sep 12 19:31:32 CDT 2002
 
  -	Schedule::Depend::prepare will now take a hash ref as

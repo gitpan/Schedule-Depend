@@ -1,6 +1,47 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+0.19 Sat Apr 20 22:27:38 CDT 2002
+
+ -	At this point the interface isn't going to change.
+
+ -	Clean up unalias a bit, pushed lexicals into the
+	if-ladder.
+
+ -	Added croak ... unless $que at top of execute. Catches
+ 	accidental re-runs quicker.
+
+ -	Code allows unalias to be called as a class method.
+ 	Main use of this is more automatic handling of the 
+	if-ladder for cases where a preliminary job has to 
+	be run outside of the schedule.
+
+ - 	Added eval to require the package for A::B-type
+ 	aliases. This guarantees that $packag->can( $subroutine )
+	succeeds even if S::D doesn't already have the
+	package available.
+
+ - 	Package::Subroutine alias handling includes an 
+ 	eval to require the sub in case it hasn't already 
+	been pulled in where unalias can see it.
+
+ -	unalias always returns a code referent. handling of
+ 	system calls is pushed into S::D->shellexec. This
+	allows better logging of return values, since they
+	actually mean something speicific. Also allows 
+	overloaded method to run better sanity checks
+	before dispatching to the shell if the environment
+	is better controlled.
+
+ -	Slightly better testing in test.pl to account for
+ 	some of the more offball alias formats.
+
+0.18 Fri Apr 20 2002
+
+ -	Comments, POD.
+
+0.17 Pretend this never happend...
+
 0.16 Wed Apr 17 20:54:30 CDT 2002
 
  -	Updated &precheck to use the last line of a 

@@ -6,7 +6,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.18;
+our $VERSION = 0.19;
 
 use strict;
 
@@ -32,7 +32,10 @@ use Carp;
 
 use File::Basename;
 
-use Text::Balanced qw( &extract_codeblock );
+# until I resolve an issue with list context this is broken;
+# regex works well enough for now given the required syntax.
+#
+# use Text::Balanced qw( &extract_codeblock );
 
 # pretty-print the object in debug mode.
 
@@ -48,13 +51,6 @@ use Data::Dumper;
 ########################################################################
 
 # hard-coded defaults used in the constructor (prepare). 
-# these can be overridden in the config file via aliases,
-# e.g., "rundir = /tmp".
-#
-# using the PROJECT environment variable makes rooting
-# the execution a bit simpler in test environments.
-
-local $ENV{PROJECT} ||= '';
 
 my %defaultz =
 (
@@ -73,7 +69,12 @@ my %defaultz =
 # subroutines
 ########################################################################
 
-# $que evalues to true if there is anything left to be run
+########################################################################
+# examine the state of the que
+########################################################################
+
+# $que evalues to true if there is anything left to be run,
+# e.g.,: while( $que ) {...}
 
 use overload q{bool} => sub{ scalar %{ $_[0]->{queued} } };
 
@@ -96,6 +97,10 @@ sub ready
 # list of all jobs queued.
 
 sub queued { sort keys %{ $_[0]->{queued} } }
+
+########################################################################
+# handle specific jobs
+########################################################################
 
 # syntatic sugar. 
 # mainly here as an example of what the que entry does.
@@ -149,159 +154,6 @@ sub complete
 	}
 }
 
-# the result here gets passed to runjob for
-# execution. idea here is to hand off whatever
-# seems most useful to run.
-#
-# Changes to unalias should be carefully checked
-# againsed what runjob expects to handle.
-#
-# checking for the package is 
-# generally overkill but allows this to be
-# called as a normal subroutine and still
-# return something useful.
-#
-# Note: need to make sure that:
-#
-#	foo = Package::Name->blah
-#
-# ends up as Package::Name->blah( 'foo' );
-#
-# the $packge, $subname trick will break on 
-# this because "Name->blah" won't be any kind
-# of valid subroutine w/in the package.
-#
-# question is whether the $que->can will handle
-# this properly or another test is required in 
-# order to deal with these.
-
-sub unalias
-{
-	# $que might be a blessed object or it might be
-	# a package name. Either way, we will be able to
-	# use it in "$que->can( $job )".
-
-	my $que = shift;
-	my $job = shift;
-
-	# if $que is a referent then access its alias sub-hash
-	# and grab out the entry for this job. If it doesn't
-	# exist then return the job.
-
-	my $run = ref $que && defined $que->{alias}{$job} ?
-		$que->{alias}{$job} : $job;
-
-	# the job may be a fully qualified subroutine
-	# with a package name (e.g., Foo::Bar::bletch).
-	# breaking this down up here makes the elsif
-	# test below cleaner.
-
-	my ( $block ) = $run =~ /^({.+})$/;
-
-	my ( $package, $subname ) = $run =~ /^(.+)::(.+?$)$/
-		unless $block;
-
-	# after looking for placeholders, check for a 
-	# fully-qualified sub, then a method then 
-	# anything lying around in the current package 
-	# finally anything that can be compiled into 
-	# runnable perl..
-	#
-	# if none of these is found the caller gets back
-	# a string.
-	#
-	# reminder to anyone overloading this: the $package->can
-	# is necessary to avoid $que->can( 'Foo::bar' ) returning
-	# a package-qualified sub reference. 
-	#
-	# the "sub" in the eval converts whatever block
-	# was found in the alias to an anon subroutine.
-	# any "sub" string in the original alias would
-	# have been stripped by extract_codeblock.
-
-	if( $run eq '' or $run eq 'PHONY' )
-	{
-		$run = sub { 0 };
-	}
-	elsif( $package && $subname && ( my $sub = $package->can($subname)) )
-	{
-		$run = sub { $sub->( $job ) };
-	}
-	elsif( $sub = $que->can( $run ) )
-	{
-		$run = sub { $que->$sub( $job ) };
-	}
-	elsif( $sub = __PACKAGE__->can($run) )
-	{
-		$run = sub { __PACKAGE->$sub( $job ) };
-	}
-#	elsif( my $block = (extract_codeblock($run,'{}'))[0] )
-#	{
-#		$run = eval "sub $block"
-#			or croak "$$: Bogus code block: $block";
-#	}
-	elsif( $block )
-	{
-		$run = eval "sub $run";
-	}
-
-	# at this $run is either the expanded alias
-	# as a string or a closure that will call 
-	# $run with the original job tag as its argument
-	# or an eval-ed block string.
-
-	$run
-}
-
-# execute the job after the process has forked.
-# overloading this is heavily tied to changes 
-# in unalias.
-#
-# the default behavior is to handle code references
-# by exiting with the exit status, anything else
-# gets pushed into the shell. this should handle
-# nearly all cases, since the unalias method can 
-# deliver sub ref's or closures to handle nearly
-# anything.
-#
-# returning the exit status here makes avoiding
-# phorkatosis simpler and ensures that the exit
-# status gets written to the pidfile even if
-# our parent dies while we are running.
-
-sub runjob
-{
-	my $que = shift;
-	my $run = shift;
-
-	print "$$: $run" if $que->{verbose} > 1;
-
-	# caller gets back the result of running the
-	# code or of the system call.
-
-	if( ref $run eq 'CODE' )
-	{
-		$DB::single = 1;
-
-		# the caller gets back whatever the code
-		# reference returns. anything not false
-		# gets printed (e.g., warning messages).
-		#
-		# exectution only aborts if the NUMERIC
-		# value of the return is true -- returning
-		# a text message will not abort execution.
-
-		&$run;
-	}
-	else
-	{
-		# alwyas hands back a number, so the 
-		# normal exit/signal extraction applies.
-
-		system( $run );
-	}
-}
-
 # called prior to job execution in all modes to determine if the 
 # job seems runnable. test for existing pidfiles w/o exit status,
 # etc.
@@ -320,14 +172,19 @@ sub precheck
 
 	my $verbose = $que->{verbose} > 1;
 
+	# jobs can be shell paths, strip the directory to get 
+	# something valid.
+
+	my $base = basename $job;
+
 	my $pidfile =
-		$que->{pidz}{$job} = $que->{alias}{rundir} . "/$job.pid";
+		$que->{pidz}{$job} = $que->{alias}{rundir} . "/$base.pid";
 
 	my $outfile =
-		$que->{outz}{$job} = $que->{alias}{logdir} . "/$job.out";
+		$que->{outz}{$job} = $que->{alias}{logdir} . "/$base.out";
 
 	my $errfile =
-		$que->{errz}{$job} = $que->{alias}{logdir} . "/$job.err";
+		$que->{errz}{$job} = $que->{alias}{logdir} . "/$base.err";
 
 	print "$$: Precheck: $job" if $verbose;
 
@@ -471,7 +328,223 @@ sub precheck
 	$running
 }
 
+########################################################################
+# convert the job tag from the schedule into what gets run and run it.
+# these are general fodder for overloading.
+########################################################################
+
+# the result here gets passed to runjob for
+# execution. idea here is to hand off whatever
+# seems most useful to run.
+#
+# Changes to unalias should be carefully checked
+# againsed what runjob expects to handle.
+#
+# checking for the package is 
+# generally overkill but allows this to be
+# called as a normal subroutine and still
+# return something useful.
+#
+# Note: need to make sure that:
+#
+#	foo = Package::Name->blah
+#
+# ends up as Package::Name->blah( 'foo' );
+#
+# the $packge, $subname trick will break on 
+# this because "Name->blah" won't be any kind
+# of valid subroutine w/in the package.
+#
+# question is whether the $que->can will handle
+# this properly or another test is required in 
+# order to deal with these.
+
+sub unalias
+{
+	# $que might be a blessed object or it might be
+	# a package name. Either way, we will be able to
+	# use it in "$que->can( $job )".
+
+	my $que = shift;
+	my $job = shift;
+
+	# if $que is a referent then access its alias sub-hash
+	# and grab out the entry for this job. If it doesn't
+	# exist then return the job.
+
+	my $run = ref $que && defined $que->{alias}{$job} ?
+		$que->{alias}{$job} : $job;
+
+	# this goes into the pidfile to identify what
+	# we are running. it will be the 2nd line of
+	# the file, before the exit codes.
+
+	my $pidstring = "$job = $run";
+
+	# process $run into a sub referent if we can find
+	# a way:
+	#
+	#	phony aliases return an immediate zero.
+	#
+	#	code blocks are evaled into a sub -- note that
+	#	this leaves any variables in the block expressed
+	#	here, in this package.
+	#
+	# Note: from here down the sub's are called with an 
+	# argument of the original job tag from the
+	# schedule. see the POD for examples of where
+	# this can be useful for dispatching multiple
+	# jobs through the same code.
+	#
+	#	check for fully qualified subnames -- this has
+	# 	to be done AFTER checking for code blocks, which
+	# 	may contain legit "::". since S::D may not have
+	# 	already use-ed the module, require it here --
+	#	ignore any error since the package may be 
+	#
+	#	check if the que object has a method to handle
+	# 	the call.
+	#
+	#	check if the current package has a subroutine
+	#	name.
+	#
+	# caller gets back the anonymous sub referent or
+	# the contents of $run.
+
+	my $sub = 0;
+
+	if( $run eq 'PHONY' )
+	{
+		$sub = sub { 0 };
+	}
+	elsif( my ($block) = $run =~ /^({.+})$/ )
+	{
+		$sub = eval "sub $block"
+			or croak "$$: Invalid block for $job: $block";
+	}
+	elsif( my ($p,$s) = $run =~ /^(.+)::(.+?$)$/ )
+	{
+		eval "require $p";
+
+		my $fqsub = $p->can( $s )
+			or croak "$$: Bogus $job ($run): $p cannot $s";
+
+		$sub = sub { $fqsub->( $job ) };
+	}
+	elsif( my $method = $que->can( $run ) )
+	{
+		$sub = sub { $que->$method( $job ) };
+	}
+	elsif( my $pkgsub = __PACKAGE__->can($run) )
+	{
+		$sub = sub { __PACKAGE__->$pkgsub( $job ) };
+	}
+	else
+	{
+		$sub = sub { $que->shellexec($run) };
+	}
+
+	die "$$: Bogus unalias: no subroutine for $pidstring"
+		unless $sub;
+
+	print "$$: $pidstring" if $que->{verbose} > 1;
+
+	$sub
+
+}
+
+# we know a bit more about the speicfics of 
+# the system call. putting this into its
+# own method allows better reporting and 
+# saves the caller from having to figure 
+# out what a shell vs. subroutine return
+# means.
+
+sub shellexec
+{
+	my $que = shift;
+	my $run = shift;
+
+	# if anything goes wrong put a message
+	# into the logfile and pass the non-zero 
+	# exit status up the food chain.
+
+	if( system($run) == -1 )
+	{
+		# we failed to run the program,
+
+		carp "$$: Failed system($run): $!";
+
+		-1
+	}
+	elsif( my $stat = $? )
+	{
+		# system succeeded in running the 
+		# program but it failed during 
+		# execution.
+
+		if( my $exit = $stat >> 8 )
+		{
+			carp "$$: Non-zero return for $run: $exit";
+		}
+		elsif( $stat = 128 )
+		{
+			carp "$$: Coredump from $run";
+		}
+		elsif( my $signal = $stat & 0xFF )
+		{
+			carp "$$: $run stopped by signal: $signal";
+		}
+
+		$?
+	}
+	else
+	{
+		print "$$: system($run) succeeded"
+			if $que->{verbose} > 1;
+
+		0
+	}
+}
+
+# execute the job after the process has forked.
+# overloading this is heavily tied to changes 
+# in unalias.
+#
+# the default behavior is to handle code references
+# by exiting with the exit status, anything else
+# gets pushed into the shell. this should handle
+# nearly all cases, since the unalias method can 
+# deliver sub ref's or closures to handle nearly
+# anything.
+#
+# returning the exit status here makes avoiding
+# phorkatosis simpler and ensures that the exit
+# status gets written to the pidfile even if
+# our parent dies while we are running.
+
+sub runjob
+{
+	my $que = shift;
+	my $run = shift;
+
+	# the caller gets back whatever the code
+	# reference returns. anything not false
+	# gets printed (e.g., warning messages).
+	#
+	# exectution only aborts if the NUMERIC
+	# value of the return is true -- returning
+	# a text message will not abort execution.
+	#
+	# the system closures will return a numeric
+	# value w/ exit + signal.
+
+	&$run
+}
+
+########################################################################
 # constructor.
+########################################################################
 
 sub prepare
 {
@@ -806,6 +879,26 @@ sub prepare
 # exit. This allows debug in and restart mode without 
 # having to clean up the pidfiles by hand.
 
+########################################################################
+# process the que.
+########################################################################
+
+# copy the que and run it once through to determine if there
+# are any deadlock or unalis issues. the copy is necessary to
+# avoid the debug operation "consuming" all of the queued
+# entires.
+#
+# note that this may have subtle effects in cases where unalias
+# has side-effects as it runs (e.g., updating global variables).
+#
+# if the copied object successfully empties itself then the
+# original que object is returned. this allows for:
+#
+#	eval { S::D->prepare(%argz)->debug->execute };
+#
+# to debug and run the que in one pass since the debug will
+# abort execution by returning undef if it fails.
+
 sub debug
 {
 	my $que = shift;
@@ -842,6 +935,11 @@ sub execute
 	local $| = 1;
 
 	my $que = shift;
+
+	# after execute has been called once the que cannot be
+	# re-run since the queued array has been consumed.
+
+	croak "$$: Bogus execute: Nothing to run" unless $que;
 
 	# set the verbosity level. rather than test 
 	# for $verbose > X a zillion times this sets
@@ -880,7 +978,7 @@ sub execute
 	# housekeeping: set run-specific variables to 
 	# reasonable values.
 
-	$que->{abort} = 0;
+	$que->{abort} = '';
 
 	# may have been tickled externally, localizing the value
 	# here avoids screwing up the caller's settings.
@@ -956,9 +1054,6 @@ sub execute
 				# the prepare method.
 
 				my $run = $que->unalias( $job );
-
-				print "$$: Unalias: $job => $run\n"
-					if $print_detail;
 
 				# open the pidfile first, better to croak here than
 				# leave a job running w/o a pidfile.
@@ -1047,7 +1142,7 @@ sub execute
 					$que->dequeue( $job );
 					$que->complete( $job );
 				}
-				elsif( $que->{abort} )
+				elsif( my $reason = $que->{abort} )
 				{
 					# jobz doesn't get updated here: since nothing is forked
 					# there isn't a pid to store anywhere. 
@@ -1055,9 +1150,9 @@ sub execute
 					# we do have to update the pidfile, however, to show
 					# that the job was aborted.
 
-					print "$$: Skipping $job ($run) due to que abort.";
+					print "$$: Skipping $job ($run) due to: $reason";
 
-					print $fh "$$\nabort $job ($run)\n-1";
+					print $fh "$$\nAbort: $reason: $job ($run)\n-1";
 
 					$que->dequeue( $job );
 					$que->complete( $job );
@@ -1126,12 +1221,14 @@ sub execute
 						open STDERR, '>', $errpath or croak "$errpath: $!";
 
 						# do the deed, record the result and exit.
-						# forcing the numeric context allows code
-						# to return a warning or mesage without the
-						# que aborting.
 						#
-						# child never reaches the point where $fh is
-						# closed in the main loop.
+						# printing the string to the file handle 
+						# allows subroutines to return more useful
+						# completion messages -- so long as they
+						# evaluate to zero.
+						#
+						# Note: child never reaches the point where $fh
+						# is closed in the main loop.
 						
 						my $result = $que->runjob( $run );
 
@@ -1139,29 +1236,11 @@ sub execute
 						
 						close $fh;
 
-						# the status and signal tests are guaranteed to
-						# work for system (stringy $job) calls. if a sub
-						# returns a string the += 0 will convert it to a
-						# numeric zero.
+						my $exit = $result + 0;
 
-						$result += 0;
+						warn "$$: $job: $exit" if $exit;
 
-						warn "$$: $job: $result" if $result;
-
-						if( my $stat = $result >> 8 )
-						{
-							carp "$$: Non-zero return for $job: $stat";
-						}
-						elsif( my $signal = $result & 0xFF )
-						{
-							carp "$$: $job stopped by signal: $signal";
-						}
-						else
-						{
-							print "$$: Completed $job" if $print_progress;
-						}
-
-						exit $result;
+						exit $exit;
 					}
 					else
 					{
@@ -1173,7 +1252,7 @@ sub execute
 
 						print STDERR "\nn$$: phorkafobia on $job: $!";
 
-						$que->{abort} = 1;
+						$que->{abort} = "Phorkaphobia at $job";
 					}
 				}
 
@@ -1194,11 +1273,12 @@ sub execute
 			# or the queue is deadlocked.
 
 			print STDERR "\n$$: Deadlocked schedule: neither runnable nor pending jobs.\n";
+			print STDERR "\n$$: Remaining jobs:", $que->queued;
 
-			$que->{abort} = 1;
+			$que->{abort} = 'Deadlock';
 		}
 
-		print STDERR "\n$$: Aborting queue due to errors.\n"
+		print STDERR "\n$$: Aborting queue due to $que->{abort}.\n"
 			if $que->{abort};
 
 		# block for something to exit, convert the pid back into a 
@@ -1218,8 +1298,8 @@ sub execute
 		# have been removed this should never hit an undefined 
 		# sub-hash in %queued.
 		#
-		# if there are no outstanding jobs then this will immediately
-		# return -1 and we won't block.
+		# if there are no outstanding jobs then wait() immediately
+		# return -1 and won't block.
 
 		if( (my $pid = wait) > 0 )
 		{
@@ -1238,27 +1318,29 @@ sub execute
 
 			close $fh;
 
-			unless( $que->{noabort} )
+			if( $status )
 			{
-				$que->{abort} ||= $status;
-			}
-			else
-			{
-				# this will cascade to other jobs that depend on 
-				# this one, forcing them to be skipped in the que.
+				print STDERR "\n$$: $job Non-zero exit: $status\n";
 
-				$que->{skip}{$job} = ABORT;
-			}
+				if( $que->{noabort} )
+				{
+					# this will cascade to other jobs that depend on 
+					# this one, forcing them to be skipped in the que.
+					#
+					# note that $que->{abort} doesn't get updated
+					# here, since the que isn't aborting, just the
+					# dependencies for this job.
 
-			if( my $exit = $status >> 8 )
-			{
-				print STDERR "\n$$: $job Non-zero exit: $exit from $job\n";
-				print STDERR "\n$$: Aborting further job startup.\n";
-			}
-			elsif( my $signal = $status & 0xF )
-			{
-				print STDERR "\n$$: $job Stopped by a signal: $signal\n";
-				print STDERR "\n$$: Aborting further job startup.\n";
+					print STDERR "\n$$: Cascading abort skip to dependent jobs";
+
+					$que->{skip}{$job} = ABORT;
+				}
+				else
+				{
+					print STDERR "\n$$: Aborting further job startup.\n";
+
+					$que->{abort} = 'Nonzero exit';
+				}
 			}
 			else
 			{
@@ -1280,6 +1362,12 @@ sub execute
 	print STDERR $que->{debug} ?
 		"$$: Debugging Completed." :
 		"$$: Execution Completed.";
+
+	# avoid running the que multiple times. simpler to
+	# catch this at the beginning since it has fewer
+	# side effects.
+
+	$que->{executed} = 1;
 
 	0
 }

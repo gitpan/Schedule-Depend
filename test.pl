@@ -10,7 +10,7 @@ package Schedule::Depend::Test;
 # Change 1..1 below to 1..last_test_to_print .
 # (It may become useful if the test is moved to ./t subdirectory.)
 
-BEGIN { $| = 1; print "1..1\n"; }
+BEGIN { $| = 1; print "1..37\n"; }
 END {print "not ok 1\n" unless $loaded;}
 use Schedule::Depend;
 $loaded = 1;
@@ -220,6 +220,47 @@ sub testify
 		}
 	}
 
+	{
+		print "\nTesting alias syntax: $ok\n";
+
+		package Findit;
+
+		use base qw( Schedule::Depend );
+
+		sub getscalled { print "I got called!"; 0 };
+
+		# getscalled should end up as a sub call in unalas.
+
+		my $sched =
+		q{
+			# should be loacated 
+			bar = getscalled
+			foo = File::Basename::basename
+			baz = { print "Hello, world!"; 0 }
+			bam = /bin/pwd
+
+
+			foo : bar
+			baz : foo
+			bam : baz
+			/bin/ls : bam
+		};
+
+		my %argz = 
+		(
+			rundir	=> $rundir,
+			logdir	=> $logdir,
+			sched	=> $sched, 
+			verbose	=> 0,
+		);
+
+		$DB::single = 1;
+
+		eval { Findit->prepare( %argz )->execute };
+
+		++$ok;
+		print STDERR $@ ? "\nnot ok $ok\t:$@\n" : "\nok $ok\n";
+	}
 	eval
 	{
 		unlink <$rundir/*>;
@@ -228,37 +269,6 @@ sub testify
 
 	$badnews
 }
-
-{
-	print "\nTesting Sequence: $ok\n";
-
-	package Find::The::Package::Sub;
-
-	sub getscalled { print "I got called!" }
-
-	my $sched = 
-	qq{
-		rundir	= $rundir
-		logdir	= $logdir
-
-		cleanup = rm -f $rundir/*
-
-		# getscalled should end up as a sub call in unalas.
-
-		cleanup : getscalled
-	};
-
-	my %argz = 
-	(
-		sched	=> $sched, 
-		verbose	=> 0,
-	);
-
-	eval { Schedule::Depend->prepare( %argz )->debug->execute };
-
-	print STDERR $@ ? "\nnot ok $ok\t:$@\n" : "\nok $ok\n";
-}
-
 
 # exit non-zero if we hit any snags.
 

@@ -1,19 +1,51 @@
+Revision history for Perl extension Schedule::Depend
+(most recent first).
 
-Revision history for Perl extension Schedule::Depend.
+0.08 Fri Apr  5 10:10:08 CST 2002
+
+ -	Added runjob to handle the result of unalias
+	after the fork. If the unaliased scalar is a
+	code reference then it exits with the result
+	of &$job; otherwise exec's $job. 
+
+	Using an unalias with:
+
+		no strict 'refs';
+		\&$job
+
+	to expand the tag from the scheule allows 
+	queueing subroutines -- or a mixture of
+	subroutines and shell execs. This could also
+	return a closure to push evaluation parameters
+	even later into the cycle (or for testing).
+
+	See notes for unalias & runjob for examples.
+
+ -	Added switch for handling failed jobs without
+	aborting the queue. This offers the same effect
+	as "make -k". If "noabort => true" is passed
+	into prepare then jobs that fail will have their
+	dependencies marked for skipping and the pidfiles
+	will get a nastygram + exit status of -1 (i.e.,
+	they will be re-executed on a restart). 
+
+	The noabort code doesn't seem to break anything,
+	but has not been fully tested (yet).
+
+ -	pidfile and output directories can be passed in with the arguments,
+	picked up from the environment or default to the current
+	executable's directory name. the environment method can be
+	handy for the single-argument version.
+
+ -	Serious updates to pod and comments.
+
 
 0.07
 
-	Revised exit status writing. The child uses
-	system instead of exec and writes $? to its
-	own pidfile; the parent writes $? to the pidfile
-	if it is non-zero. This allows either the parent
-	or child to get zapped by a signal, leave the
-	other running and correctly record the status.
-	It also means that the pidfiles may be 4 lines
-	long on failure. Fix there is to read [0..2]
-	to check the status on the way in for restarts.
-
-	Updated comments to reflect reality a bit better.
+	Default for $que->{alias}{logdir} and {rundir}
+	are "dirname $0". Simplifies running multpile
+	copies of the same file and schedule from 
+	different directories via soft link.
 
 0.06
 
@@ -21,7 +53,7 @@ Revision history for Perl extension Schedule::Depend.
 	required since individual job output goes to 
 	stdout/stderr files.
 
-	Shuffled verobse prints to a bit to give saner
+	Shuffled verbose prints to a bit to give saner
 	combinatins of output. At this point test.log 
 	should give a reasonable idea of what slient,
 	progress and detailed output look like.

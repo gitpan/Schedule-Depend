@@ -20,31 +20,72 @@ print "ok 1\n";
 # (correspondingly "not ok 13") depending on the success of chunk 13
 # of the test code):
 
+########################################################################
+# housekeeping & package variables
+########################################################################
+
 use Cwd qw( &abs_path );
 
-my $dir = abs_path '.';
+local $/;
 
-my $rundir = "$dir/tmp";
+my $pid	= $$;
+
+my $ok	= 1;
+
+my $dir		= abs_path '.';
+my $rundir	= "$dir/tmp";
+
+$ENV{RUNDIR} = $rundir;
+$ENV{LOGDIR} = $rundir;
 
 -d $rundir || mkdir $rundir, 02777
 	or die "$rundir: $!";
 
 unlink <$rundir/*>;
 
-local $/;
-my $defsched =
-	<DATA> . "\nrundir = $rundir\nlogdir = $rundir\n\ncleanup = ls -l $rundir";
+my $defsched = <DATA> . "\ncleanup = ls -l $rundir/*\n";
 
-my $ok = 1;
+my @defargz =
+(
+	rundir => $rundir,
+	logdir => $logdir,
+);
 
-my $pid = $$;
+########################################################################
+# subroutines
+########################################################################
+{
+	package Testify;
+
+	use base qw( Schedule::Depend );
+
+	# unalias the jobs by converting them to a closure.
+	# this could also use "no strict 'refs'" and return
+	# \&$job to return a subroutine name;
+
+	sub unalias
+	{
+		my $que = shift;
+
+		my $job = $que->{alias}{$_[0]} || $_[0];
+
+		# gotta make sure we return zero from the sub...
+
+		sub
+		{
+			print STDOUT "\n$$: closure for $job\n";
+			0
+		}
+	}
+}
+
 
 sub test_debug
 {
 	print STDERR "Testing debug (seq $ok)\n";
 
 	# tests single-argument constructor.
-	# w/o schedule override, should run with 
+	# w/o schedule override, should run with
 	# verbose == 1.
 
 	Schedule::Depend->prepare( shift )->debug
@@ -54,7 +95,7 @@ sub test_execute
 {
 	print STDERR "$$: Testing execute (seq $ok)\n";
 
-	my @argz = ( sched => shift, verbose => 1 );
+	my @argz = ( @defargz, sched => shift, verbose => 2 );
 
 	# nice trick here it that the line numbers tell
 	# you if the que failed inside of prepare or debug.
@@ -65,7 +106,7 @@ sub test_execute
 	}
 	else
 	{
-		undef
+		die "$$: Schedule::Depend failed to prepare: $@";
 	}
 }
 
@@ -73,28 +114,53 @@ sub test_debug_execute
 {
 	print STDERR "Testing debug w/ execute (seq $ok)\n";
 
-	# this should run through all of the stages 
+	# this should run through all of the stages
 	# quietly.
 
-	my @argz = ( sched => shift, verbose => 0 );
+	my @argz = ( @defargs, sched => shift, verbose => 0 );
 
-	if( my $que = Schedule::Depend->prepare( @argz )->debug )
+	eval
 	{
+		my $que = Schedule::Depend->prepare( @argz )->debug
+			or die "$$: Schedule::Depend failed to prepare: $@";
+
 		$que->execute;
-	}
-	else
-	{
-		undef
-	}
+	};
+
+	die $@ if $@;
 }
 
 sub test_restart
 {
 	print STDERR "Testing execute w/ restart (seq $ok)\n";
 
-	my @argz = ( sched => shift, restart => 1, verbose => 1 );
+	my @argz = ( @defargz, sched => shift, restart => 1, verbose => 1 );
 
-	Schedule::Depend->prepare( @argz )->execute
+	eval { Schedule::Depend->prepare( @argz )->execute };
+
+	die $@ if $@;
+}
+
+sub test_subcall
+{
+	print STDERR "Testing subcall w/ debug (seq $ok)\n";
+
+	my @argz = ( @defargz, sched => shift, verbose => 1 );
+
+	eval { Testify->prepare( @argz )->execute };
+
+	die $@ if $@;
+}
+
+sub test_subcall_restart
+{
+	print STDERR "Testing subcall w/ restart (seq $ok)\n";
+
+	my @argz = ( @defargz, sched => shift, restart => 1, verbose => 1 );
+
+	eval { Testify->prepare( @argz )->execute };
+
+	die $@ if $@;
 }
 
 
@@ -103,16 +169,16 @@ sub testify
 	my $badnews = 0;
 
 	my @subz =
-
 	(
 		\&test_debug,
 		\&test_execute,
 		\&test_debug_execute,
 		\&test_restart,
+		\&test_subcall,
+		\&test_subcall_restart,
 	);
 
-	open STDOUT, '> test.log'
-		or die "test.log: $!";
+	open STDOUT, '> test.log' or die "test.log: $!";
 
 	for my $maxjob ( qw(1 2 0) )
 	{
@@ -128,9 +194,11 @@ sub testify
 
 				print "\nTesting Sequence: $ok\n";
 
-				&$_( $sched );
-
-				die "$$: Forkatosis in Depend" if $$ != $pid;
+				eval
+				{
+					&$_( $sched );
+					die "$$: Forkatosis in Depend" if $$ != $pid;
+				};
 
 				if( $@ )
 				{
@@ -139,7 +207,7 @@ sub testify
 					print STDERR "\nnot ok $ok\t$@\n";
 
 					++$badnews if $@;
-					
+
 				}
 				else
 				{
@@ -149,7 +217,7 @@ sub testify
 		}
 	}
 
-	eval 
+	eval
 	{
 		unlink <$rundir/*>;
 		rmdir $rundir;
@@ -181,7 +249,7 @@ f = echo "f"
 # job must exist without dependencies (explicitly via "foo:"
 # or implicitly as dependency that has no dependencies of its own).
 # in this case "startup" has no further dependencies and will
-# be the first job run. 
+# be the first job run.
 
 # the normal jobs depend on our "startup" job being complete.
 

@@ -4,7 +4,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.04;
+use strict;
 
 # make messages output during the use phase prettier.
 
@@ -27,6 +27,8 @@ use Data::Dumper;
 ########################################################################
 # package variables
 ########################################################################
+
+our $VERSION = 0.05;
 
 # hard-coded defaults used in the constructor (prepare). 
 # these can be overridden in the config file via aliases,
@@ -234,7 +236,13 @@ sub precheck
 	my $verbose = $que->{verbose} > 1;
 
 	my $pidfile =
-		$que->{filz}{$job} = $que->{alias}{rundir} . "/$job.pid";
+		$que->{pidz}{$job} = $que->{alias}{rundir} . "/$job.pid";
+
+	my $outfile =
+		$que->{outz}{$job} = $que->{alias}{logdir} . "/$job.out";
+
+	my $errfile =
+		$que->{errz}{$job} = $que->{alias}{logdir} . "/$job.err";
 
 	print "\n$$: Precheck: $job" if $verbose;
 
@@ -247,7 +255,7 @@ sub precheck
 	# zero on the previous pass. setting it to zero here
 	# avodis uninit variable warnings.
 
-	$que->{skip}{$job} ||= 0;
+	$que->{skip}{$job} = 0;
 
 	# any pidfile without an exit status implies a running job
 	# and prevents further execution. in restart mode any file
@@ -303,8 +311,7 @@ sub precheck
 			}
 			else
 			{
-				print "$$: Not Running:  $job" if $que->{verbose}
-					if $verbose;
+				print "$$: Not Running:  $job" if $verbose;
 			}
 		}
 		elsif( @linz )
@@ -341,8 +348,8 @@ sub precheck
 		print "$$:	No pidfile: $job is not running" if $verbose;
 	}
 
-	# zero out the pidfile if the job isn't running at 
-	# this point. leaving this down here makes it simpler
+	# zero out the pid/log/err files if the job isn't running
+	# at this point. leaving this down here makes it simpler
 	# to update the block above if we have more than one
 	# way to decide if things are still running.
 
@@ -353,8 +360,17 @@ sub precheck
 	}
 	else
 	{
-		open my $fh, '>', $pidfile
-			or croak "Failed writing empty $pidfile: $!";
+		# after this point it seems likely that we can open the
+		# the necessary files for write at runtime. leaving
+		# them open here doesn't save much time and is a headache
+		# if we are running in debug mode anyway.
+
+		for my $path ( $pidfile, $outfile, $errfile )
+		{
+			open my $fh, '>', $path
+				or croak "Failed writing empty $path: $!";
+		}
+
 	}
 
 	# caller gets back true if we suspect that the job is 
@@ -403,6 +419,11 @@ sub prepare
 
 	my $item = shift;
 
+	# we either need one or an even number of arguments.
+
+	croak "\nOdd number of arguments"
+		if @_ > 1 && @_ % 2;
+
 	my %argz = @_ > 1 ? @_ : ( sched => $_[0] );
 
 	# writing the pidfiles out will overwrite any history
@@ -434,7 +455,9 @@ sub prepare
 			depend	=> {},	# inter-job dependencies.
 			skip	=> {},	# used to skip jobs on restart.
 			jobz	=> {},	# current list of running jobs.
-			filz	=> {},	# pidfile paths, see pidfile sub.
+			pidz	=> {},	# pidfile paths by job tag.
+			outz	=> {},	# logfile paths by job tag.
+			errz	=> {},	# errfile paths by job tag.
 
 			alias	=> {},	# default alias values
 
@@ -446,7 +469,6 @@ sub prepare
 	my $depend	= $que->{depend};
 	my $queued	= $que->{queued};
 	my $alias	= $que->{alias};
-	my $filz	= $que->{filz};
 
 	# defaults avoid undef warnings.
 	#
@@ -637,7 +659,7 @@ sub prepare
 
 	}
 
-	if( $que->{verbose} )
+	if( $que->{verbose} > 1 )
 	{
 		print join "\n\t", "\n\nJobs:\n", sort keys %$queued;
 		print join "\n\t", "\n\nWaiting for:\n", sort keys %$depend;
@@ -704,11 +726,13 @@ sub debug
 {
 	my $que = shift;
 
-	my $tmp = eval ( $tmp = Dumper $que )
+	my $tmp = Dumper $que
 		or croak "Failed to generate tmp que for debug: $!";
 
+	$tmp = eval $tmp
+		or croak "Failed eval of Dumped queue: $!";
+
 	$tmp->{debug}	= 1;
-	$tmp->{verbose}	= 99;	# guaranteed to be the max :-)
 	$tmp->{maxjob}	= 1;
 
 	eval { $tmp->execute };
@@ -753,14 +777,15 @@ sub execute
 	# logs have a start/completion message in them
 	# at least.
 
-	print STDERR $que->{debug}  ?
-		"\n$$: Debugging:\n", Dumper $que, "\n" :
-		"\n$$: Beginning Execution\n";
+	print STDERR "\n$$: Beginning Execution\n";
+
+	print "\n$$: Debugging:\n", Dumper $que, "\n"
+		if $que->{debug};
 
 	# housekeeping: set run-specific variables to 
 	# reasonable values.
 
-	local $que->{abort} = 0;
+	$que->{abort} = 0;
 
 	# may have been tickled externally, localizing the value
 	# here avoids screwing up the caller's settings.
@@ -773,15 +798,13 @@ sub execute
 	my $t0 = time;
 
 	# associate pids returned by wait with the jobs we forked.
-	#
-	# note: this probably belongs in the object, would allow
-	# the complete method to clean it up on the way through.
 
-	my $jobz = $que->{jobz};
+	my $jobz = {};
 
 	# nothing started, yet.
-	# this gets compared to $que->{maxjob} to decide how many
-	# runnable jobs can be forked.
+	# $curjob gets compared to $maxjob to decide how many
+	# runnable jobs can be forked each time we compute the
+	# runnable jobs list.
 
 	my $maxjob = $que->{alias}{maxjob};
 	my $curjob = 0;
@@ -862,28 +885,11 @@ sub execute
 				# open the pidfile first, better to croak here than
 				# leave a job running w/o a pidfile.
 
-				open my $fh, '>', $que->{filz}{$job}
-					or croak "$$: $job: $que->{filz}{$job}: $!"
+				open my $fh, '>', $que->{pidz}{$job}
+					or croak "$$: $job: $que->{pidz}{$job}: $!"
 						unless $que->{skip}{$job};
 
-				if( $que->{skip}{$job} )
-				{
-					# job is being skipped due to the queue running in restart
-					# mode and the job exiting zero on the preivous pass.
-					#
-					# jobz doesn't get updated here: since nothing is forked
-					# there isn't a pid to store anywhere.
-					#
-					# the pidfile also doesn't get updated since it
-					# already contains enough information.
-
-					print "\n\t\tSkipping $job ($run) on restart."
-						if $print_progress;
-
-					$que->dequeue( $job );
-					$que->complete( $job );
-				}
-				elsif( $que->{debug} )
+				if( $que->{debug} )
 				{
 					# skip forking in the debugger, I have enough
 					# problems already...
@@ -896,6 +902,23 @@ sub execute
 					# cleanup.
 
 					print $fh "$$\ndebug $job ($run)\n1\n";
+
+					$que->dequeue( $job );
+					$que->complete( $job );
+				}
+				elsif( $que->{skip}{$job} )
+				{
+					# job is being skipped due to the queue running in restart
+					# mode and the job exiting zero on the preivous pass.
+					#
+					# jobz doesn't get updated here: since nothing is forked
+					# there isn't a pid to store anywhere.
+					#
+					# the pidfile also doesn't get updated since it
+					# already contains enough information.
+
+					print "\n\t\tSkipping $job ($run) on restart."
+						if $print_progress;
 
 					$que->dequeue( $job );
 					$que->complete( $job );
@@ -954,6 +977,11 @@ sub execute
 					}
 					elsif( defined $pid )
 					{
+						# remember to do this before closing stdout.
+
+						print "\n$$: Executing: $job ($run)\n"
+							if $print_detail;
+
 						# child never reaches the point where this is
 						# closed in the main loop.
 
@@ -962,15 +990,24 @@ sub execute
 						# Note: make sure to exit w/in this block to
 						# avoid forkatosis. the exec is effectively
 						# an exit since it stops running this code.
-
-						print "\n$$: Executing: $job ($run)\n"
-							if $print_detail;
-
-						# single-argument form allows the shell
+						#
+						# single-argument exec allows the shell
 						# to expand any meta-char's in $run.
 						#
 						# braces avoid compiler warning about 
 						# unreachable code on the croak.
+
+						my $outpath = $que->{outz}{$job};
+						my $errpath = $que->{errz}{$job};
+
+						print "\n$$: $job: Output in $outpath"
+							if $print_detail;
+
+						print "\n$$: $job: Errors in $errpath"
+							if $print_detail;
+
+						open STDOUT, '>', $outpath or croak "$outpath: $!";
+						open STDERR, '>', $errpath or croak "$errpath: $!";
 
 						{ exec $run }
 
@@ -980,7 +1017,7 @@ sub execute
 
 						print STDERR "\n$$: Failed exec for $job: $!\n";
 
-						$que->{abort} = 1;
+						exit -1;
 					}
 					else
 					{
@@ -998,8 +1035,11 @@ sub execute
 
 				# parent closes the file handle here, regardless
 				# of how the file was processed.
+				#
+				# test avoids problems if the file handle wasn't
+				# opened (e.g., if the job was skipped).
 
-				close $fh;
+				close $fh if $fh;
 			}
 		}
 		elsif( %$jobz == 0 )
@@ -1043,29 +1083,27 @@ sub execute
 			my $job = $jobz->{$pid}
 				or die "$$: unknown pid $pid";
 
-			print "\n$$: Exit: $job ($pid) $status\t$que->{filz}{$job}\n"
+			print "\n$$: Exit: $job ($pid) $status\t$que->{pidz}{$job}\n"
 				if $print_detail;
 
-			open my $fh, '>>',  $que->{filz}{$job}
-				or croak "$que->{filz}{$job}: $!";
+			open my $fh, '>>',  $que->{pidz}{$job}
+				or croak "$que->{pidz}{$job}: $!";
 
 			print $fh "\n$status\n";
 
 			close $fh;
 
+			$que->{abort} ||= $status;
+
 			if( my $exit = $status >> 8 )
 			{
 				print STDERR "\n$$: $job Non-zero exit: $exit from $job\n";
 				print STDERR "\n$$: Aborting further job startup.\n";
-
-				$que->{abort} = 1;
 			}
 			elsif( my $signal = $status & 0xF )
 			{
 				print STDERR "\n$$: $job Stopped by a signal: $signal\n";
 				print STDERR "\n$$: Aborting further job startup.\n";
-
-				$que->{abort} = 1;
 			}
 			else
 			{

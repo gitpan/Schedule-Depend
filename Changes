@@ -1,14 +1,13 @@
 Revision history for Perl extension Schedule::Depend.
 
-0.01  Wed Feb  6 10:20:32 2002
-	Beta
+0.05:
 
-0.02  Wed Feb  6 17:25:02 CST 2002
-	Release-able version.
+	Output of individual jobs goes to $logdir/$job.out
+	and $logdir/$job.err. Main purpose is to keep the
+	top-level schedule logs clean.
 
-0.03 Wed Feb 27 12:20:18 CST 2002
-	Doc updates.
-	test.pl updated.
+	test.pl puts stdout to test.log -- saves a lotta 
+	stuff flying by on make test.
 
 0.04 Fri Mar  1 13:52:34 CST 2002
 
@@ -26,3 +25,13 @@ Revision history for Perl extension Schedule::Depend.
 	and que start/complete messages to STDERR.
 
 	doc updates to reflect changes in verbosity.
+
+0.03 Wed Feb 27 12:20:18 CST 2002
+	Doc updates.
+	test.pl updated.
+
+0.02  Wed Feb  6 17:25:02 CST 2002
+	Release-able version.
+
+0.01  Wed Feb  6 10:20:32 2002
+	Beta

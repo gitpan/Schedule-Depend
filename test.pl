@@ -1,3 +1,5 @@
+#!/usr/bin/perl
+
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
@@ -33,13 +35,16 @@ local $/;
 my $defsched =
 	<DATA> . "\nrundir = $rundir\nlogdir = $rundir\n\ncleanup = ls -l $rundir";
 
-select STDERR;
-
 my $ok = 1;
+
+my $pid = $$;
 
 sub test_debug
 {
-	print "Testing debug ($ok)\n";
+	print STDERR "Testing debug (seq $ok)\n";
+
+	# also tests where the single-argument form of the
+	# constructor works properly.
 
 	my @argz = ( shift );
 
@@ -48,25 +53,42 @@ sub test_debug
 
 sub test_execute
 {
-	print "Testing execute ($ok)\n";
+	print STDERR "$$: Testing execute (seq $ok)\n";
 
-	my @argz = ( sched => shift, verbose => 1 );
+	my @argz = ( sched => shift, verbose => 2 );
 
-	Schedule::Depend->prepare( @argz )->execute
+	if( my $que = Schedule::Depend->prepare( @argz ) )
+	{
+		$que->execute
+	}
+	else
+	{
+		undef
+	}
 }
 
 sub test_debug_execute
 {
-	print "Testing debug w/ execute ($ok)\n";
+	print STDERR "Testing debug w/ execute (seq $ok)\n";
 
-	my @argz = ( sched => shift, verbose => 1 );
+	# this should run through all of the stages 
+	# quietly.
 
-	Schedule::Depend->prepare( @argz )->debug->execute;
+	my @argz = ( sched => shift, verbose => 0 );
+
+	if( my $q = Schedule::Depend->prepare( @argz )->debug )
+	{
+		$q->execute;
+	}
+	else
+	{
+		undef
+	}
 }
 
 sub test_restart
 {
-	print "Testing execute w/ restart ($ok)\n";
+	print STDERR "Testing execute w/ restart (seq $ok)\n";
 
 	my @argz = ( sched => shift, restart => 1, verbose => 1 );
 
@@ -87,9 +109,12 @@ sub testify
 		\&test_restart,
 	);
 
+	open STDOUT, '> test.log'
+		or die "test.log: $!";
+
 	for my $maxjob ( qw(1 2 0) )
 	{
-		eval { unlink <$rundir/*pid> };
+		eval { unlink <$rundir/*.???> };
 
 		for my $debug ( '', 'debug = 1' )
 		{
@@ -99,32 +124,34 @@ sub testify
 			{
 				++$ok;
 
-				eval { &$_( $sched ) };
+				print "\nTesting Sequence: $ok\n";
+
+				&$_( $sched );
+
+				die "$$: Forkatosis in Depend" if $$ != $pid;
 
 				if( $@ )
 				{
 					print "Bad news, boss: $@";
 
-					print STDOUT "\nnot ok $ok\t$@\n";
+					print STDERR "\nnot ok $ok\t$@\n";
 
 					++$badnews if $@;
 					
 				}
 				else
 				{
-					print STDOUT "\nok $ok\n";
+					print STDERR "\nok $ok\n";
 				}
 			}
 		}
 	}
 
-	eval
+	eval 
 	{
-		unlink <$rundir/*pid>;
+		unlink <$rundir/*>;
 		rmdir $rundir;
 	};
-
-	print STDERR "Failed cleanup: $@" if $@;
 
 	$badnews
 }
@@ -139,14 +166,14 @@ __DATA__
 
 # aliases for the targets and depdencies
 
-startup = pwd
+startup = /bin/pwd
 
-a = echo "a" 1>&2
-b = echo "b" 1>&2
-c = echo "c" 1>&2
-d = echo "d" 1>&2
-e = echo "e" 1>&2
-f = echo "f" 1>&2
+a = echo "a"
+b = echo "b"
+c = echo "c"
+d = echo "d"
+e = echo "e"
+f = echo "f"
 
 # the names "startup" and "cleanup" are arbitrary. at least one
 # job must exist without dependencies (explicitly via "foo:"

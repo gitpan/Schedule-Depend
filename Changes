@@ -1,9 +1,30 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+0.20 Mon Apr 29 13:24:20 CDT 2002
+
+ -	Remove depdency on Text::Balanced until I can make
+ 	the logic work; regexen work nicely for now.
+
+ -	Removed option for null alias ("foo ="), leaving 
+ 	PHONY as a placeholder. This leaves the schedules
+	a bit more obvious and less prone to dropout errors.
+
+ -	POD and comment updates. POD is still behind development
+ 	but less so.
+
+ -	Basic interface for prepare/execute seems stable. A few 
+ 	more methods may be broken out but the top-level calls
+	should remian stable.
+
+ -	test.pl needs to be updated with more complete tests for
+ 	handling of perl blocks, restart and noabort.
+
+ -	Added a generic README.
+
 0.19 Sat Apr 20 22:27:38 CDT 2002
 
- -	At this point the interface isn't going to change.
+ -	At this point the main interface isn't likely to change.
 
  -	Clean up unalias a bit, pushed lexicals into the
 	if-ladder.

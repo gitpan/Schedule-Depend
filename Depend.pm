@@ -6,7 +6,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.19;
+our $VERSION = 0.20;
 
 use strict;
 
@@ -24,6 +24,8 @@ local $| = 1;
 #	ABORT flags jobs with a failed dependency that are being
 #	skipped because they cannot be run. their waitfor entries
 #	will be flagged with ABORT also.
+#
+#	Default value is 0 (false).
 
 use constant CLEAN	=>  1;
 use constant ABORT	=> -1;
@@ -205,6 +207,8 @@ sub precheck
 
 	if( -s $pidfile )
 	{
+		local $/ = "\n";
+
 		open my $fh, '<', $pidfile or croak "$$: < $pidfile: $!";
 
 		chomp( my @linz = <$fh> );
@@ -233,9 +237,8 @@ sub precheck
 			if( $que->{restart} )
 			{
 				# take the last exit from the file -- the child
-				# and parent both write the same thing to the
-				# file so whichever the last one is will be
-				# sufficient.
+				# and parent both write to the file so whichever
+				# the last one is will be sufficient.
 				#
 				# since a sub return can be any string that
 				# evaluates numerically to zero we have to
@@ -271,6 +274,10 @@ sub precheck
 			# here's where the fun part starts. for now i'll
 			# punt: anything without an exit status is assumed
 			# to be running.
+			#
+			# on systems with /proc filesystems or that have
+			# perly process modules this check could be more 
+			# thorough.
 
 			print STDERR "\n$$:	Pidfile without exit: $job";
 
@@ -279,10 +286,12 @@ sub precheck
 	}
 	elsif( -e $pidfile )
 	{
-		# assume the job is running. this may require some 
-		# manual cleanup but avoids the logic race of a 
-		# file being checked while the pid and run lines
-		# are buffered.
+		# empty pidfile (no size).
+		#
+		# the only place this should show up is after 
+		# precheck has been run for the job and before
+		# it is run. in any case, it's likely to be in
+		# the preparation phase.
 		#
 		# Note: on Solaris or Linux this could check things
 		# via /proc or Unix::Process. Occams Razor tells me
@@ -309,10 +318,12 @@ sub precheck
 	}
 	else
 	{
-		# after this point it seems likely that we can open the
-		# the necessary files for write at runtime. leaving
-		# them open here doesn't save much time and is a headache
-		# if we are running in debug mode anyway.
+		# final sanity check: create a set of zero-length
+		# files. this guarantees we can write to them later
+		# on and locks the schedule in to S::D.
+		#
+		# leaving the files open causes hassles, they will
+		# be repoened as necessary later during the execution.
 
 		for my $path ( $pidfile, $outfile, $errfile )
 		{
@@ -333,31 +344,26 @@ sub precheck
 # these are general fodder for overloading.
 ########################################################################
 
-# the result here gets passed to runjob for
-# execution. idea here is to hand off whatever
-# seems most useful to run.
+# the result here gets passed to runjob for execution. idea here
+# is to hand off whatever seems most useful to run.
 #
-# Changes to unalias should be carefully checked
-# againsed what runjob expects to handle.
+# changes to unalias should be carefully checked againsed what
+# runjob expects to handle.
 #
-# checking for the package is 
-# generally overkill but allows this to be
-# called as a normal subroutine and still
-# return something useful.
+# checking for the package # generally overkill but allows this to be
+# called as a normal subroutine and still return something useful.
 #
-# Note: need to make sure that:
+# Note: The subroutine call aliased:
 #
 #	foo = Package::Name->blah
 #
-# ends up as Package::Name->blah( 'foo' );
+# ends up as
 #
-# the $packge, $subname trick will break on 
-# this because "Name->blah" won't be any kind
-# of valid subroutine w/in the package.
+#	Package::Name->blah( 'foo' );
 #
-# question is whether the $que->can will handle
-# this properly or another test is required in 
-# order to deal with these.
+# This means that the sub needs to gracefully handle
+# being called as a method, with a referent as its 
+# first argument.
 
 sub unalias
 {
@@ -441,7 +447,7 @@ sub unalias
 	}
 	else
 	{
-		$sub = sub { $que->shellexec($run) };
+		$sub = sub { $que->shellexec($run, $job) };
 	}
 
 	die "$$: Bogus unalias: no subroutine for $pidstring"
@@ -1387,37 +1393,36 @@ Schedule::Depend
 Single argument is assumed to be a schedule, either newline 
 delimited text or array referent:
 
-	my $q = Scheduler->prepare( "newline delimited schedule" );
+	my $que = Scheduler->prepare( "newline delimited schedule" );
 
-	my $q = Scheduler->prepare( [ qw(array ref of schedule lines) ] );
+	my $que = Scheduler->prepare( [ (array of schedule lines) ] );
+
+	my $que = Scheduler->prepare( sched => "foo:bar", verbose => 1 );
+
+	$que->debug;
+	$que->execute;
 
 Multiple items are assumed to be a hash, which much include the
 "sched" argument.
 
-	my $q = Scheduler->prepare( sched => "foo:bar", verbose => 1 );
-
-Object can be saved and used to execute the schedule or the schedule
-can be executed (or debugged) directly:
-
-	$q->debug;
-	$q->execute;
-
 	Scheduler->prepare( sched => $depend)->debug;
 	Scheduler->prepare( sched => $depend, verbose => 1  )->execute;
 
-Since the deubgger returns undef on a bogus queue:
+	eval { Scheduler->prepare( sched => $depend)->debug->execute };
 
-	Scheduler->prepare( sched => $depend)->debug->execute;
 
-The "unalias" method can be safely overloaded for specialized
-command construction at runtime; precheck can be overloaded in
-cases where the status of a job can be determined easily (e.g.,
-via /proc). A "cleanup" method may be provided, and will be
-called after the job is complete.
+Schedules contain make-like dependencies:
 
-See notes under "unalias" and "runjob" for how jobs are
-dispatched. The default methods will handle shell code
-sub names automatically.
+	foo bar : bletch blort # foo and bar depend on bletch and blort
+
+or aliases:
+
+	x = PHONY
+	foo = subroutine
+	bar = Package::subroutine
+	bletch = { code_block($ENV{WHATEVER}); return 0 }
+	blort  = /shell/command
+
 
 =head1 Arguments
 
@@ -1435,14 +1440,23 @@ or multiple dependencies:
 
 	wait1 wait2 : dep1 dep2 dep3
 
-or no dependencies:
+or no dependencies (mainly for documentation):
 
 	runs_immediately :
 
-Which are unnecessary but can help document the code.
+or a placeholder job:
 
-Dependencies without a wait_for argument are an error (e.g.,
-": foo" will croak during prepare).
+	shortname = PHONY
+
+which can be used to tie groups of jobs to one
+another without having to include long lists on
+the right-hand side.
+
+Dependencies without a wait_for argument are an error:
+
+	": foo"
+	
+will croak during prepare.
 
 The schedule can be passed as a single argument (string or
 referent) or with the "depend" key as a hash value:
@@ -1561,14 +1575,13 @@ The pidfile serves three purposes:
 
 =back
 
-Each job is executed via fork/exec (or sub call, see notes
-for unalias and runjob). The parent writes out a 
-pidfile with initially two lines: pid and command line. It
-then closes the pidfile. The child keeps the file open and
-writes its exit status to the file if the job completes;
-the parent writes the returned status to the file also. This
-makes it rather hard to "loose" the completion and force an
-abort on restart.
+Each job is executed via fork and a closure call. The
+parent writes out a pidfile with initially two lines: pid
+and command line. It then closes the pidfile. The child
+keeps the file open and writes its exit status to the
+file if the job completes; the parent writes the returned
+status to the file also. This makes it rather hard to
+"loose" the completion and force an abort on restart.
 
 =head2 Schedules
 
@@ -1578,7 +1591,7 @@ look like make rules:
 
 	target = expands_to
 
-	target : dependency
+	target : depends_on
 
 example:
 
@@ -2117,15 +2130,10 @@ Actually do the deed. There is no reason to overload
 this that I can think of. 
 
 
-
 =head1 Known Bugs
 
 The block-eval of code can yield all sorts of oddities
-if the block has side effects (e.g., exit()). This 
-probably needs to be better wrapped. In any case, caveat
-scriptor...
-
-The eval also needs to be better tested in test.pl.
+if the block has side effects (e.g., exit()).  caveat scriptor...
 
 =head1 Author
 
@@ -2146,7 +2154,7 @@ of fitness for a particular purpose or warranty of merchantability.
 
 perl(1)
 
-perlobj(1) perlfork(1) perlreftut(1) 
+perlobj(1) perlipc(1) perlfork(1) perlreftut(1) 
 
 Other scheduling modules:
 

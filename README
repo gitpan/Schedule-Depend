@@ -1,0 +1,25 @@
+Schedule::Depend
+
+Parallel scheduling of jobs with dependency tracking. Module allows
+restarting failed queues, mixing perl subroutines and shell code in
+the dependencies.
+
+To install the module:
+
+	perl Makefile.PL;
+
+	make;
+	make test install;
+
+Use care replacing a working version with a new one if the new 
+verison does not pass the "make test" phase.
+
+Required additional modules & minimum versions:
+	
+	Data::Dumper	2.102
+	File::Basename	2.6
+
+See perl(1) and ExtUtils::MakeMaker(1) for examples of how to 
+modify installation from its defaults (e.g., moving the installed
+location via "perl Makefile.PL PREFIX=~").
+

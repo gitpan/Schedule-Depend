@@ -7,12 +7,14 @@ WriteMakefile
 (
 	NAME	=> "Schedule::Depend",
 
-    VERSION	=> '2.2',
+    VERSION	=> '2.3',
 
 	ABSTRACT	=>
 'Parallel process startup with dependencies and restart.
 Execute, Config, Utilities modules simplify generating
-#! code for running queues.',
+#! code for running queues including logging, email
+notification, file read/write, and generation of absolute
+paths relative to the execution directory paths via tokens .',
 
 	AUTHOR     	=> 'Steven Lembark <lembark@wrkhors.com>',
 	PREREQ_PM	=> 

@@ -59,6 +59,7 @@ qw(
 	checkdir
 
 	slurp
+	splat
 );
 
 
@@ -403,12 +404,18 @@ sub checkdir
 
 sub slurp
 {
-	local $/;
-
 	my $path = shift
 		or croak "Bogus slurp: missing path";
 
-	$path .= '.dump' unless -e $path;
+	# check the standard alternates from splat if 
+	# the path passed in does not exist.
+
+	unless( -e $path )
+	{
+		$path = join '', ( fileparse $path, qr{\.\w+} )[1,0];
+
+		-e $path . $_ and $path .= $_ for( qw(.dump .tsv) );
+	}
 
 	-e $path	or nastygram "Missing $path";
 	-r _		or nastygram "Unreadable $path";
@@ -417,17 +424,131 @@ sub slurp
 	open my $fh, '<', $path
 		or nastygram "$path: $!";
 
+	local $/;
+
 	defined ( my $item = <$fh> )
 		or nastygram "Failed read on non-empty: $path";
 
-	# caller gets back the result of eval-ing the item
-	# if it is anything. $resut will be true even for
-	# empty structs (e.g., the referents $a = {}  $b = []
-	# are both true).
+	# if the result can be eval-ed into a defined value
+	# then hand that back. otherwise split it on newlines
+	# split the contents on tabs and hand back an array-
+	# of-arrays ref.
 
-	my $result = eval $item
-		or nastygram "Failed eval during slurp", $path;
+	if( my $result = eval $item )
+	{
+		$result
+	}
+	else
+	{
+		my @data = map { [ split /\t/ ] } split "\n", $item;
+
+		\@data
+	}
 }
+
+# write out data in a format that can be slurped.
+# main issue is ensuring that the extensions match.
+
+sub splat_fh
+{
+	my $name = shift
+		or die "Bogus splat_fh: missing name";
+
+	# this might usefully be false.
+
+	defined ( my $ext = shift )
+		or die "Bogus splat_fh: missing extension";
+
+	my $path = localpath $name;
+
+	my ( $base, $dir ) = (fileparse $path, qr{\.\w+} )[0,1];
+
+	$path = join '', $dir, $base, $ext;
+
+	log_message "Opening $name -> $path";
+
+	open my $fh, '>', $path
+		or die "$path: $!";
+
+	$fh
+}
+
+sub splat
+{
+	my $name = shift
+		or croak "Bogus write_dump: missing name";
+
+	my $data = shift
+		or croak "Bogus write_dump: missing data referent";
+
+	if( defined eval { scalar @$data } )
+	{
+		local $\ = "\n";
+		local $, = "\t";
+
+		my $fh = splat_fh $name, '.tsv';
+
+		my $test = $data->[0];
+
+		if( defined eval { @$test } )
+		{
+			print $fh @$_ for @$data;
+		}
+		else
+		{
+			print $fh "$_" for @$data;
+		}
+	}
+	elsif( defined eval { scalar %$data } )
+	{
+		if( keys %$data < 1000 )
+		{
+			my $fh = splat_fh $name, '.dump';
+
+			print $fh Dumper $data
+		}
+		else
+		{
+			local $\ = "\n";
+			local $, = "\t";
+
+			my $fh = splat_fh $name, '.tsv';
+
+			# print arrays out tab separated.
+			# other than that assume whatever
+			# is there will be a simple value
+			# or something that can successfully
+			# stringify itself.
+
+			my $test = (values %$data)[0];
+
+			if( defined eval{ @$test } )
+			{
+				print $fh $a, @$b
+					while( ($a,$b) = each %$data );
+			}
+			else
+			{
+				print $fh $a, "$b"
+					while( ($a,$b) = each %$data );
+			}
+		}
+	}
+	else
+	{
+		# not an array or hash: assume Dumper knows
+		# how to deal with it...
+
+		my $fh = splat_fh $name, '.dump';
+
+		print $fh Dumper $data;
+	}
+
+	# not much to hand  back
+	
+	0
+}
+
 
 ########################################################################
 # keep require happy
@@ -566,7 +687,7 @@ fatality message, and send the result to everyone listed in
 the fatal list. 
  
 
-=item Local files: localpath, checkdir, slurp.
+=item Local files: localpath, checkdir, slurp, splat.
 
 localpath uses $config->{basename} to convert a path plus
 basename-or-token to a path relative to $FindBin::Bin. Its
@@ -639,6 +760,19 @@ a scalar).
 
 If the eval failes slurp calls nastygram with a message
 of the failed path.
+
+splat writes out files in a way that is consistent with
+sulrp reading them. Its main use is in avoiding Data::Dumper
+in cases where the block of data is to large to effectively
+convert to sourceable text. If it is passed an array or
+if the number of hash keys is greater than 1000, splat will
+write data out as a tab-separated-values ('.tsv') file.
+
+Note: slurp and splat default to using ".dump" as the 
+extension for Data::Dumper-ed content, ".tsv" for tab
+separated. splat may modify the path given in basenames
+to accomodate the format actually written; slurp looks
+for both ".tsv" and ".dump" extensions.
 
 =back
 

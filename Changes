@@ -1,6 +1,13 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+2.3 Sat Jan 15 10:17:11 EST 2005
+
+- Added "splat" to Utilities. This writes out larger items
+  as tab-separated-values files, which saves overhead of 
+  Dumper. Update slurp to eval then split on newlines and
+  tabs (i.e., handle splat output).
+
 2.2 Mon Jan 10 08:20:47 UTC 2005
 
 - Added sanity check for missing classes after use base of

@@ -285,11 +285,12 @@ sub runsched
 		}
 	};
 
-	if( $result + 0 )
+
+	if( defined $result and $result + 0 )
 	{
 		die "$$: Execution Exited with: $result";
 	}
-	elsif( $@ )
+	elsif( ! defined $result or $@ )
 	{
 		die "$$: Roadkill: execution aborted";
 	}

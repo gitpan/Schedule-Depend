@@ -7,7 +7,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.33;
+our $VERSION = 0.34;
 
 use strict;
 
@@ -1716,8 +1716,6 @@ sub execute
 						$DB::fork_TTY = $tty;
 					}
 
-					$DB::single = 1;
-
 					if( my $pid = fork )
 					{
 						print $fh "$pid\n$jobid";
@@ -1853,8 +1851,6 @@ sub execute
 
 		if( (my $pid = wait) > 0 )
 		{
-			$DB::single = 1;
-
 			my $status = $?;
 
 			my $job = $jobz->{$pid}

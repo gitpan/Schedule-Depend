@@ -45,7 +45,7 @@ use Data::Dumper;
 # package variables
 ########################################################################
 
-our $VERSION = 0.15;
+our $VERSION = 0.16;
 
 # hard-coded defaults used in the constructor (prepare). 
 # these can be overridden in the config file via aliases,
@@ -177,8 +177,6 @@ sub complete
 
 sub unalias
 {
-	$DB::single = 1;
-
 	# $que might be a blessed object or it might be
 	# a package name. Either way, we will be able to
 	# use it in "$que->can( $job )".
@@ -198,7 +196,10 @@ sub unalias
 	# breaking this down up here makes the elsif
 	# test below cleaner.
 
-	my ( $package, $subname ) = $run =~ /^(.+)::(.+?$)$/;
+	my ( $block ) = $run =~ /^({.+})$/;
+
+	my ( $package, $subname ) = $run =~ /^(.+)::(.+?$)$/
+		unless $block;
 
 	# after looking for placeholders, check for a 
 	# fully-qualified sub, then a method then 
@@ -234,15 +235,20 @@ sub unalias
 	{
 		$run = sub { __PACKAGE->$sub( $job ) };
 	}
-	elsif( my ($block,$junk) = extract_codeblock($run,'{}') )
+#	elsif( my $block = (extract_codeblock($run,'{}'))[0] )
+#	{
+#		$run = eval "sub $block"
+#			or croak "$$: Bogus code block: $block";
+#	}
+	elsif( $block )
 	{
-		$run = eval "sub $block"
-			or croak "$$: Bogus code block: $block";
+		$run = eval "sub $run";
 	}
 
 	# at this $run is either the expanded alias
 	# as a string or a closure that will call 
-	# $run with the original job tag as its argument.
+	# $run with the original job tag as its argument
+	# or an eval-ed block string.
 
 	$run
 }
@@ -275,6 +281,8 @@ sub runjob
 
 	if( ref $run eq 'CODE' )
 	{
+		$DB::single = 1;
+
 		# the caller gets back whatever the code
 		# reference returns. anything not false
 		# gets printed (e.g., warning messages).
@@ -348,7 +356,7 @@ sub precheck
 
 		print "$$:	Pidfile:  $pidfile", @linz if $verbose;
 
-		if( @linz == 3 )
+		if( @linz >= 3 )
 		{
 			# the job exited, check the status in case we
 			# are running in restart mode. either way, the
@@ -366,12 +374,18 @@ sub precheck
 
 			if( $que->{restart} )
 			{
-				my( $pid, $cmd, $exit ) = @linz;
+				# take the last exit from the file -- the child
+				# and parent both write the same thing to the
+				# file so whichever the last one is will be
+				# sufficient.
+				#
+				# since a sub return can be any string that
+				# evaluates numerically to zero we have to
+				# use a numeric comparison here for a valid test.
 
-				# avoid numeric comparision, exit status of "dog"
-				# would work then also...
+				my( $pid, $cmd, $exit ) = @linz[0,1,-1];
 
-				if( $exit eq '0' )
+				if( $exit = 0 )
 				{
 					# no reason to re-run this job.
 					# note: this is always reprinted.
@@ -645,6 +659,11 @@ sub prepare
 
 	for( grep { ! /=/ } @linz )
 	{
+		# avoids problems with empty rules ending in : not having
+		# a [^:] to parse on the end.
+
+		s/:$/: /;
+
 		my( $a, $b ) = map { [ split ] } split /[^:]:[^:]/, $_, 2;
 
 		croak "$$: Bogus rule '$_' has no targets"
@@ -652,6 +671,9 @@ sub prepare
 
 		print "$$: Processing rule: '$_'\n"
 			if $verbose;
+
+		croak "$$: Bogus parse, contains ':' as job for $_"
+			if grep /:/, (@$a, @$b );
 
 		# step 1: validate the job status. this includes
 		# checking if any are already running or if we
@@ -1080,11 +1102,6 @@ sub execute
 						print "$$: Executing: $job ($run)\n"
 							if $print_detail;
 
-						# child never reaches the point where this is
-						# closed in the main loop.
-
-						close $fh;
-
 						# Note: make sure to exit w/in this block to
 						# avoid forkatosis. the exec is effectively
 						# an exit since it stops running this code.
@@ -1111,23 +1128,30 @@ sub execute
 						# forcing the numeric context allows code
 						# to return a warning or mesage without the
 						# que aborting.
+						#
+						# child never reaches the point where $fh is
+						# closed in the main loop.
 						
-						my $exit = $que->runjob( $run );
+						my $result = $que->runjob( $run );
 
-						warn "$$: $job: $exit" if $exit;
+						print $fh $result;
 						
+						close $fh;
+
 						# the status and signal tests are guaranteed to
 						# work for system (stringy $job) calls. if a sub
 						# returns a string the += 0 will convert it to a
 						# numeric zero.
 
-						$exit += 0;
+						$result += 0;
 
-						if( my $stat = $exit >> 8 )
+						warn "$$: $job: $result" if $result;
+
+						if( my $stat = $result >> 8 )
 						{
 							carp "$$: Non-zero return for $job: $stat";
 						}
-						elsif( my $signal = $exit & 0xFF )
+						elsif( my $signal = $result & 0xFF )
 						{
 							carp "$$: $job stopped by signal: $signal";
 						}
@@ -1136,9 +1160,7 @@ sub execute
 							print "$$: Completed $job" if $print_progress;
 						}
 
-						print $fh $exit;
-
-						exit $exit;
+						exit $result;
 					}
 					else
 					{

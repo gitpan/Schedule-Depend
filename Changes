@@ -1,7 +1,29 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
-0.13 Tue Apr 16 12:13:59 CDT 2002
+0.16 Wed Apr 17 20:54:30 CDT 2002
+
+ -	Updated &precheck to use the last line of a 
+ 	pidfile if has >= 3 lines and perform a 
+	numeric comparison to 0 for the exit status.
+	This allows for the child + parent both 
+	writing the status and sub's returning strings
+	for successful execution.
+
+ -	Put back the code that has the child writing
+ 	the returned scalar to the pidfile unmodified.
+	This will store any return strings from called
+	sub's. Parent gets back $result + 0 and writes
+	the numeric pic to the file. Either way, the
+	next pass with precheck can use "$linz[-1] = 0"
+	to determine if the job completed successfully.
+
+ -	Removed Text::Balanced until I can find out 
+ 	why it returns a block for "/foo/bar". Using
+	regex /^({.+})$/ to extract any blocks.
+ 	
+
+0.15 Tue Apr 16 12:13:59 CDT 2002
 
  -	Add the use of Text::Balanced::extract_codeblock
  	to handle anon sub's in the aliases. This allows

@@ -43,19 +43,21 @@ sub test_debug
 {
 	print STDERR "Testing debug (seq $ok)\n";
 
-	# also tests where the single-argument form of the
-	# constructor works properly.
+	# tests single-argument constructor.
+	# w/o schedule override, should run with 
+	# verbose == 1.
 
-	my @argz = ( shift );
-
-	Schedule::Depend->prepare( @argz )->debug
+	Schedule::Depend->prepare( shift )->debug
 }
 
 sub test_execute
 {
 	print STDERR "$$: Testing execute (seq $ok)\n";
 
-	my @argz = ( sched => shift, verbose => 2 );
+	my @argz = ( sched => shift, verbose => 1 );
+
+	# nice trick here it that the line numbers tell
+	# you if the que failed inside of prepare or debug.
 
 	if( my $que = Schedule::Depend->prepare( @argz ) )
 	{
@@ -76,9 +78,9 @@ sub test_debug_execute
 
 	my @argz = ( sched => shift, verbose => 0 );
 
-	if( my $q = Schedule::Depend->prepare( @argz )->debug )
+	if( my $que = Schedule::Depend->prepare( @argz )->debug )
 	{
-		$q->execute;
+		$que->execute;
 	}
 	else
 	{

@@ -28,7 +28,7 @@ use Data::Dumper;
 # package variables
 ########################################################################
 
-our $VERSION = 0.05;
+our $VERSION = 0.06;
 
 # hard-coded defaults used in the constructor (prepare). 
 # these can be overridden in the config file via aliases,
@@ -153,6 +153,8 @@ sub complete
 	my $que = shift;
 	my $job = shift;
 
+	my $verbose = $que->{verbose} > 1;
+
 	# syntatic sugar, also a minor speedup w/ $queued..
 
 	my $queued = $que->{queued};
@@ -244,7 +246,7 @@ sub precheck
 	my $errfile =
 		$que->{errz}{$job} = $que->{alias}{logdir} . "/$job.err";
 
-	print "\n$$: Precheck: $job" if $verbose;
+	print "$$: Precheck: $job" if $verbose;
 
 	# gets set to true in the if-block if the job is running.
 
@@ -339,13 +341,13 @@ sub precheck
 		# via /proc or Unix::Process. Occams Razor tells me
 		# to leave this alone until it proves to be a problem.
 
-		print STDERR "$$:	Still running: empty $pidfile";
+		print STDERR "\n$$:	Still running: empty $pidfile";
 
 		$running = 1;
 	}
 	else
 	{
-		print "$$:	No pidfile: $job is not running" if $verbose;
+		print "\n$$:	No pidfile: $job is not running" if $verbose;
 	}
 
 	# zero out the pid/log/err files if the job isn't running
@@ -355,7 +357,7 @@ sub precheck
 
 	if( $que->{skip}{$job} || $running )
 	{
-		print "\n$$: Leaving existing pidfile untouched\n"
+		print "\n$$: Leaving existing pidfile untouched"
 			if $verbose;
 	}
 	else
@@ -453,13 +455,15 @@ sub prepare
 		{
 			queued	=> {},	# jobs pending execution.
 			depend	=> {},	# inter-job dependencies.
+
 			skip	=> {},	# used to skip jobs on restart.
 			jobz	=> {},	# current list of running jobs.
-			pidz	=> {},	# pidfile paths by job tag.
-			outz	=> {},	# logfile paths by job tag.
-			errz	=> {},	# errfile paths by job tag.
 
-			alias	=> {},	# default alias values
+			alias	=> {},	# $q->{alias}{tag} = value
+
+			pidz	=> {},	# $que->{pidz}{$job} = path
+			outz	=> {},	# stdout of forked jobs.
+			errz	=> {},	# stderr of forked jobs.
 
 		},
 		ref $item || $item;
@@ -481,11 +485,6 @@ sub prepare
 	# perl debugger always runs in debug mode, debug mode
 	# always runs verbose.
 	#
-	# restart sets a "skip this" flag for any jobs whose
-	# pidfiles show a zero exit. this allows any dependencies
-	# to be maintained w/o having to re-run the entire que
-	# if it aborts.
-	#
 	# $argz{verbose} overrides all other levels during
 	# preparation, without an argument it's either 
 	# 2 (set via $que->{debug}) or defaults to 0 (not much
@@ -494,16 +493,30 @@ sub prepare
 	# verbose > 0 will display the input lines.
 	# verobse > 1 additionally displays each alias/dependency
 	# as it is processed.
+	#
+	# if nothing "verbose" is set in the schedule or arg's 
+	# then debug mode runs in "progress" mode for verbose.
+	#
+	# restart sets a "skip this" flag for any jobs whose
+	# pidfiles show a zero exit. this allows any dependencies
+	# to be maintained w/o having to re-run the entire que
+	# if it aborts.
 
 	$que->{debug}   =	$alias->{debug} ? 1 :
 						$argz{debug}	? 1 :
 						$^P;
 
-	$que->{verbose} =	$argz{verbose} ? $argz{verbose} :
-						$que->{debug}  ? 2 :
+	$que->{verbose} =	$alias->{verbose}	? $alias->{verbose} :
+						$argz{verbose}		? $argz{verbose} :
+						$que->{debug}		? 1	:
 						0;
 
 	$que->{restart} = $argz{restart} ? 1 : 0;
+
+	# we only generate output here if the que's verbosity
+	# is above 1.
+
+	my $verbose = $que->{verbose} > 1;
 
 	# handle the dependency list, first step is to strip 
 	# out comments and blank lines, we are then left with
@@ -522,8 +535,8 @@ sub prepare
 	my @linz = grep /[:=]/, @{ $argz{sched} }
 		or croak "build_queue called with empty depend list.";
 
-	print "\nPreparing Schedule From:", @linz, ''
-		if $que->{verbose} > 0;
+	print "$$: Preparing Schedule From:", @linz, ''
+		if $verbose;
 
 	# step 1: deal with information in the aliases.
 	#
@@ -552,15 +565,15 @@ sub prepare
 		map { ( split /\s*=\s*/, $_, 2 ) } grep /=/, @linz
 	);
 
-	print "\n$$: Aliases:", Dumper $alias
-		if $que->{verbose} > 1;
+	print "$$: Aliases:", Dumper $alias
+		if $verbose;
 
 	croak "$$: Negative maxjob: $alias->{maxjob}" 
 		if $alias->{maxjob} < 0;
 
 	for( $alias->{rundir}, $alias->{logdir} )
 	{
-		print "$$: Checking: $_" if $que->{verbose} > 1;
+		print "$$: Checking: $_" if $verbose;
 
 		-e		|| croak "Non-existant:  $_";
 		-w _	|| croak "Un-writable:   $_";
@@ -574,8 +587,8 @@ sub prepare
 	# items without '=' are the sequence information, items
 	# with '=' in them have already been dealt with above.
 
-	print "\n$$: Starting rule processing"
-		if $que->{verbose} > 1;
+	print "$$: Starting rule processing"
+		if $verbose;
 
 	for( grep { ! /=/ } @linz )
 	{
@@ -584,8 +597,8 @@ sub prepare
 		croak "$$: Bogus rule '$_' has no targets"
 			unless $a;
 
-		print "\n$$: Processing rule: '$_'\n"
-			if $que->{verbose} > 1;
+		print "$$: Processing rule: '$_'\n"
+			if $verbose;
 
 		# step 1: validate the job status. this includes
 		# checking if any are already running or if we
@@ -659,10 +672,10 @@ sub prepare
 
 	}
 
-	if( $que->{verbose} > 1 )
+	if( $verbose )
 	{
-		print join "\n\t", "\n\nJobs:\n", sort keys %$queued;
-		print join "\n\t", "\n\nWaiting for:\n", sort keys %$depend;
+		print join "$$: Jobs:", sort keys %$queued;
+		print join "$$: Waiting for:", sort keys %$depend;
 	}
 
 	# quick sanity checks: is everything listed as a dependency
@@ -686,16 +699,16 @@ sub prepare
 
 	if( my @initial =  ready $que )
 	{
-		print join "\t", "\n\nInitial Job(s): ", @initial, "\n"
-			if $que->{verbose};
+		print join "\t", "$$: Initial Job(s): ", @initial, "\n"
+			if $verbose;
 	}
 	else
 	{
 		croak "Deadlocked schedule: No jobs are initially runnable.";
 	}
 
-	print "\n\nResuling queue:\n", Dumper $que, "\n"
-		if $que->{debug};
+	print "$$: Resuling queue:\n", Dumper $que, "\n"
+		if $verbose;
 
 	# if we are still alive at this point the queue looks 
 	# sane enough to try.
@@ -726,16 +739,21 @@ sub debug
 {
 	my $que = shift;
 
-	my $tmp = Dumper $que
-		or croak "Failed to generate tmp que for debug: $!";
+	eval
+	{
+		my $tmp = Dumper $que
+			or die "Failed to generate tmp que for debug: $!";
 
-	$tmp = eval $tmp
-		or croak "Failed eval of Dumped queue: $!";
+		$tmp = eval $tmp
+			or die "Failed eval of Dumped queue: $!";
 
-	$tmp->{debug}	= 1;
-	$tmp->{maxjob}	= 1;
+		$tmp->{debug}	= 1;
+		$tmp->{maxjob}	= 1;
 
-	eval { $tmp->execute };
+		$tmp->execute
+	};
+
+	print STDERR "\n$$: Debug Failure: $@" if $@;
 
 	# caller gets back original object for daisy-chaining or
 	# undef (which will abort further execution).
@@ -747,7 +765,7 @@ sub debug
 
 sub execute
 {
-	local $\ = "";
+	local $\ = "\n";
 	local $, = "";
 	local $/ = "\n";
 	local $| = 1;
@@ -777,10 +795,16 @@ sub execute
 	# logs have a start/completion message in them
 	# at least.
 
-	print STDERR "\n$$: Beginning Execution\n";
-
-	print "\n$$: Debugging:\n", Dumper $que, "\n"
-		if $que->{debug};
+	if( $que->{debug} )
+	{
+		print STDERR "$$: Beginning Debugging";
+		print "$$: Debugging:\n", Dumper $que
+			if $print_detail;
+	}
+	else
+	{
+		print STDERR "$$: Beginning Execution";
+	}
 
 	# housekeeping: set run-specific variables to 
 	# reasonable values.
@@ -837,7 +861,7 @@ sub execute
 			# simplest fix is to slice the extra off the end of 
 			# @runnable.
 
-			print join "\t", "\n$$: Runnable:", @runnable, "\n"
+			print join "\t", "$$: Runnable:", @runnable, "\n"
 				if $print_detail;
 
 			if( $maxjob && (my $slots = $maxjob - $curjob) > 0 )
@@ -852,8 +876,8 @@ sub execute
 
 					if( $print_detail )
 					{
-						print "\n$$: Startup slots:    $slots\n";
-						print "\n$$: Queue limited to: ", join "\t", @runnable, "\n";
+						print "$$: Startup slots:    $slots\n";
+						print "$$: Queue limited to: ", join "\t", @runnable, "\n";
 					}
 				}
 			}
@@ -862,7 +886,7 @@ sub execute
 				# we can't run anything if there aren't slots
 				# avilable. wait for something to exit.
 
-				print "\n$$: No slots available: Unable to start runnable jobs\n"
+				print "$$: No slots available: Unable to start runnable jobs\n"
 					if $print_detail;
 
 				@runnable = ();
@@ -879,7 +903,7 @@ sub execute
 
 				my $run = $que->unalias( $job );
 
-				print "\n$$: Unalias: $job => $run\n"
+				print "$$: Unalias: $job => $run\n"
 					if $print_detail;
 
 				# open the pidfile first, better to croak here than
@@ -894,14 +918,15 @@ sub execute
 					# skip forking in the debugger, I have enough
 					# problems already...
 
-					print "\nDebugging: $job ($run)\n";
+					print "Debugging: $job ($run)\n"
+						if $print_progress;
 
 					# make sure anyone who follows us thinks
 					# the thing ran cleanly. allows multiple
 					# passes in debug mode w/o manual file
 					# cleanup.
 
-					print $fh "$$\ndebug $job ($run)\n1\n";
+					print $fh "$$\ndebug $job ($run)\n1";
 
 					$que->dequeue( $job );
 					$que->complete( $job );
@@ -917,7 +942,7 @@ sub execute
 					# the pidfile also doesn't get updated since it
 					# already contains enough information.
 
-					print "\n\t\tSkipping $job ($run) on restart."
+					print "$$: Skipping $job ($run) on restart."
 						if $print_progress;
 
 					$que->dequeue( $job );
@@ -931,9 +956,9 @@ sub execute
 					# we do have to update the pidfile, however, to show
 					# that the job was aborted.
 
-					print "\n\t\tSkipping $job ($run) due to schedule abort.";
+					print "$$: Skipping $job ($run) due to schedule abort.";
 
-					print $fh "$$\nabort $job ($run)\n-1\n";
+					print $fh "$$\nabort $job ($run)\n-1";
 
 					$que->dequeue( $job );
 					$que->complete( $job );
@@ -971,15 +996,15 @@ sub execute
 
 						if( $print_detail )
 						{
-							print "\n$$: Forked $pid: $job\n";
-							print "\n$$: Queued Jobs: $curjob\n";
+							print "$$: Forked $pid: $job\n";
+							print "$$: Queued Jobs: $curjob\n";
 						}
 					}
 					elsif( defined $pid )
 					{
 						# remember to do this before closing stdout.
 
-						print "\n$$: Executing: $job ($run)\n"
+						print "$$: Executing: $job ($run)\n"
 							if $print_detail;
 
 						# child never reaches the point where this is
@@ -1000,24 +1025,20 @@ sub execute
 						my $outpath = $que->{outz}{$job};
 						my $errpath = $que->{errz}{$job};
 
-						print "\n$$: $job: Output in $outpath"
+						print "$$: $job: Output in $outpath"
 							if $print_detail;
 
-						print "\n$$: $job: Errors in $errpath"
+						print "$$: $job: Errors in $errpath"
 							if $print_detail;
 
 						open STDOUT, '>', $outpath or croak "$outpath: $!";
 						open STDERR, '>', $errpath or croak "$errpath: $!";
 
-						{ exec $run }
+						# do the deed or die trying...
 
-						# if the block above works the parent will
-						# get back the exit status of the exec-ed 
-						# code. if not then we'll end up here...
+						exec $run;
 
-						print STDERR "\n$$: Failed exec for $job: $!\n";
-
-						exit -1;
+						die "\n$$: Failed exec for $job: $!\n";
 					}
 					else
 					{
@@ -1027,7 +1048,7 @@ sub execute
 
 						print $fh -1;
 
-						print STDERR "\n$$: phorkafobia on $job: $!\n";
+						print STDERR "\nn$$: phorkafobia on $job: $!";
 
 						$que->{abort} = 1;
 					}
@@ -1083,13 +1104,13 @@ sub execute
 			my $job = $jobz->{$pid}
 				or die "$$: unknown pid $pid";
 
-			print "\n$$: Exit: $job ($pid) $status\t$que->{pidz}{$job}\n"
+			print "$$: Exit: $job ($pid) $status\t$que->{pidz}{$job}\n"
 				if $print_detail;
 
 			open my $fh, '>>',  $que->{pidz}{$job}
 				or croak "$que->{pidz}{$job}: $!";
 
-			print $fh "\n$status\n";
+			print $fh $status;
 
 			close $fh;
 
@@ -1107,7 +1128,7 @@ sub execute
 			}
 			else
 			{
-				print "\n$$: Successful: $job ($pid).\n"
+				print "$$: Successful: $job ($pid).\n"
 					if $print_progress;
 			}
 
@@ -1119,8 +1140,8 @@ sub execute
 
 			if( $print_detail )
 			{
-				print "\n$$: Current Jobs: $curjob\n";
-				print "\n$$: Pending Jobs: ",
+				print "$$: Current Jobs: $curjob\n";
+				print "$$: Pending Jobs: ",
 					scalar values %$jobz, "\n";
 			}
 
@@ -1128,8 +1149,8 @@ sub execute
 	}
 
 	print STDERR $que->{debug} ?
-		"\n\n$$: Debugging Completed.\n" :
-		"\n\n$$: Execution Completed.\n";
+		"$$: Debugging Completed." :
+		"$$: Execution Completed.";
 
 	0
 }
@@ -1183,7 +1204,7 @@ called after the job is complete.
 
 =over 4
 
-=item depend
+=item sched
 
 The dependencies are described much like a Makefile, with targets
 waiting for other jobs to complete on the left and the dependencies
@@ -1199,11 +1220,11 @@ or no dependencies:
 
 	runs_immediately :
 
-Dependencies without a wait_for argument are an error.
+Dependencies without a wait_for argument are an error (e.g.,
+": foo" will croak during prepare).
 
 The schedule can be passed as a single argument (string or
 referent) or with the "depend" key as a hash value:
-
 
 	depend => [ schedule as seprate lines in an array ]
 
@@ -1231,6 +1252,18 @@ generated queues and debugging new schedules. It displays
 the input lines as they are processed, forks/reaps, 
 exit status and results of unalias calls before the jobs
 are exec-ed.
+
+verbose can also be specified in the schedule, with 
+schedule settings overriding the args. If no verbose
+setting is made then debug runs w/ verobse == 1,
+execution with 0.
+
+=item debug
+
+Runs the full prepare but does not fork any jobs, pidfiles
+get a "Debugging $job" entry in them and an exit of 1. This
+can be used to test the schedule or debug side-effects of
+overloaded methods. See also: verbose, above.
 
 =head1 Description
 

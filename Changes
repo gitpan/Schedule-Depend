@@ -1,5 +1,40 @@
 Revision history for Perl extension Schedule::Depend.
 
+0.06
+
+	Remove some of the extra newlines -- they aren't
+	required since individual job output goes to 
+	stdout/stderr files.
+
+	Shuffled verobse prints to a bit to give saner
+	combinatins of output. At this point test.log 
+	should give a reasonable idea of what slient,
+	progress and detailed output look like.
+
+	Process verbose as an alias for setting verbosity.
+
+	Add sanity check for odd number of arg's > 1
+	in prepare. Makes it harder to zap thyself by
+	adding "verbose => X" after a single-value
+	schedule entry.
+
+	test.pl checks for forkatotis in the module by 
+	comparing the initial pid running test.pl with
+	what's running after the test_blah call; croaks
+	if the pid has changed since test.pl startup.
+
+	Updated comments, pod to reflect the changes 
+	since 0.03.
+
+	Note: Still need to come up with a reasonable
+	definition for processing the debug alias/arg
+	during prepare and execution. It may require
+	debug levels like: 1 => don't fork, 2 => also
+	don't check or write pidfiles. Problem there
+	is making sure that mixing $que->debug with 
+	$que->prepare( ... debug => X ) doesn't cause
+	unnecessary errors.
+
 0.05:
 
 	Output of individual jobs goes to $logdir/$job.out
@@ -8,6 +43,10 @@ Revision history for Perl extension Schedule::Depend.
 
 	test.pl puts stdout to test.log -- saves a lotta 
 	stuff flying by on make test.
+
+	verbose and debug arg's to prepare and execute
+	are independent (i.e, you can now debug in silent
+	mode and get minimal output).
 
 0.04 Fri Mar  1 13:52:34 CST 2002
 

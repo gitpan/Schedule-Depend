@@ -7,7 +7,7 @@ WriteMakefile
 (
 	NAME	=> "Schedule::Depend",
 
-    VERSION	=> '1.2',
+    VERSION	=> '1.3',
 
 	(
 		$] ge '5.006001' ? 

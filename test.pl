@@ -9,6 +9,9 @@ package Schedule::Depend::Test;
 
 # Change 1..1 below to 1..last_test_to_print .
 # (It may become useful if the test is moved to ./t subdirectory.)
+#
+# test::simple has some problems due to forks, etc. Until i can 
+# work them out this is easier to hard-code.
 
 BEGIN { $| = 1; print "1..37\n"; }
 END {print "not ok 1\n" unless $loaded;}

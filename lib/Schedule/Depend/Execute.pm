@@ -137,7 +137,10 @@ sub runsched
 		my $sched = shift || $defaults->{sched}
 			or die "Bogus gensched: no schedule";
 
-		my $global = ( split /::/, $caller )[0];
+		my $global =
+			$defaults->{global_key} || ( split /::/, $caller )[0];
+
+		$defaults->{global_key} ||= $global;
 
 		log_message "Global key: $global ($caller)";
 

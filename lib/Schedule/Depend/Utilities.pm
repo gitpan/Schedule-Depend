@@ -12,7 +12,7 @@ package Schedule::Depend::Utilities;
 use strict;
 use warnings;
 
-our $VERSION=0.40;
+our $VERSION=0.50;
 
 use Carp;
 
@@ -77,12 +77,11 @@ sub import
 # package variables
 ########################################################################
 
-# syntatic sugar
-# need to delay populating $basenames until runtime.
+our $global = '';
 
-my $global = ( split /::/, __PACKAGE__ )[ 0 ];
+our $basenames = '';
 
-my $basenames = '';
+our $defaultz = \%Schedule::Depend::Execute::defaults;
 
 ########################################################################
 # logging
@@ -262,7 +261,9 @@ sub nastygram
 	# without a que object, use the global defaults
 	# to find things instead.
 
-	my $config = $Que::defaultz{$global}
+	$global ||= $defaultz->{global_key};
+
+	my $config = $defaultz->{$global}
 		or warn "Bogus config: missing global 'Schedule::Depend' entry";
 
  	my $quename = $config->{quename} || 'Unknown';
@@ -315,6 +316,11 @@ sub nastygram
 
 sub localpath
 {
+
+	$global ||= $defaultz->{global_key};
+
+	$basenames ||= $defaultz->{$global}{base};
+
 	# make a local copy of the last argument; replace
 	# symbolic names from the defaults with real 
 	# basenames. making the copy avoids modifying 
@@ -323,8 +329,6 @@ sub localpath
 	if( @_ )
 	{
 		my $name = pop;
-
-		$basenames ||= $Que::defaultz{$global}->{base};
 
 		$name = $basenames->{$name} if exists $basenames->{$name};
 
@@ -335,10 +339,15 @@ sub localpath
 
 	$path = "$Bin/$path" unless $path =~ m{^/};
 
+	# this is a hack and should be configured via
+	# values in the default config. that or this
+	# should use parsefile to default the extension
+	# if none is given. 
+
 	$path .= '.dump' if ! -e $path && -e "$path.dump";
 
 	-e dirname $path
-		or warn "Nonexistant directory: $path";
+		or carp "Nonexistant directory: $path";
 
 	# caller gets back the path, which may not 
 	# exist, yet.

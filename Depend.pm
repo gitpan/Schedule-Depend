@@ -30,6 +30,8 @@ use Carp;
 
 use File::Basename;
 
+use Text::Balanced qw( &extract_codeblock );
+
 # pretty-print the object in debug mode.
 
 use Data::Dumper;
@@ -43,7 +45,7 @@ use Data::Dumper;
 # package variables
 ########################################################################
 
-our $VERSION = 0.14;
+our $VERSION = 0.15;
 
 # hard-coded defaults used in the constructor (prepare). 
 # these can be overridden in the config file via aliases,
@@ -158,33 +160,63 @@ sub complete
 # generally overkill but allows this to be
 # called as a normal subroutine and still
 # return something useful.
+#
+# Note: need to make sure that:
+#
+#	foo = Package::Name->blah
+#
+# ends up as Package::Name->blah( 'foo' );
+#
+# the $packge, $subname trick will break on 
+# this because "Name->blah" won't be any kind
+# of valid subroutine w/in the package.
+#
+# question is whether the $que->can will handle
+# this properly or another test is required in 
+# order to deal with these.
 
 sub unalias
 {
 	$DB::single = 1;
 
-	# default: expand the job via the que alias or
-	# just return the job as-is.
+	# $que might be a blessed object or it might be
+	# a package name. Either way, we will be able to
+	# use it in "$que->can( $job )".
 
 	my $que = shift;
 	my $job = shift;
 
-	# unalias the job...
+	# if $que is a referent then access its alias sub-hash
+	# and grab out the entry for this job. If it doesn't
+	# exist then return the job.
 
-	my $run = $que->{alias}{$job} || $job;
+	my $run = ref $que && defined $que->{alias}{$job} ?
+		$que->{alias}{$job} : $job;
 
 	# the job may be a fully qualified subroutine
 	# with a package name (e.g., Foo::Bar::bletch).
 	# breaking this down up here makes the elsif
 	# test below cleaner.
 
-	my ( $package, $subname ) = $run =~ /^(.+)::(.+?$)/;
+	my ( $package, $subname ) = $run =~ /^(.+)::(.+?$)$/;
 
 	# after looking for placeholders, check for a 
 	# fully-qualified sub, then a method then 
-	# anything lying around in the current package.
+	# anything lying around in the current package 
+	# finally anything that can be compiled into 
+	# runnable perl..
+	#
 	# if none of these is found the caller gets back
 	# a string.
+	#
+	# reminder to anyone overloading this: the $package->can
+	# is necessary to avoid $que->can( 'Foo::bar' ) returning
+	# a package-qualified sub reference. 
+	#
+	# the "sub" in the eval converts whatever block
+	# was found in the alias to an anon subroutine.
+	# any "sub" string in the original alias would
+	# have been stripped by extract_codeblock.
 
 	if( $run eq '' or $run eq 'PHONY' )
 	{
@@ -200,13 +232,17 @@ sub unalias
 	}
 	elsif( $sub = __PACKAGE__->can($run) )
 	{
-		$run = sub { $sub->( $job ) };
+		$run = sub { __PACKAGE->$sub( $job ) };
+	}
+	elsif( my ($block,$junk) = extract_codeblock($run,'{}') )
+	{
+		$run = eval "sub $block"
+			or croak "$$: Bogus code block: $block";
 	}
 
 	# at this $run is either the expanded alias
-	# as a string or a closure that will run
-	# $job with the un-aliased string as an 
-	# argument.
+	# as a string or a closure that will call 
+	# $run with the original job tag as its argument.
 
 	$run
 }
@@ -1679,6 +1715,57 @@ In this case /somedir/somejob.ksh will be stubbed to exit
 zero immediately. This will not interfere with any of the
 scheduling patterns, just reduce any dealays in the schedule.
 
+=head2 Note on calling convention for closures from unalias.
+
+The closures generated in unalias vary on their parameter
+passing:
+
+	$run = sub { $sub->( $job ) };				$package->can( $subname )
+
+	$run = sub { $que->$sub( $job ) };			$que->can( $run )
+
+	$run = sub { __PACKAGE__->$sub( $job ) };	__PACKAGE__->can( $run )
+
+	$run = eval "sub $block";					allows perl block code.
+
+The first case comes up because Foo::bar in a schedule
+is unlikey to successfully process any package arguments.
+The __PACKAGE__ situation is only going to show up in 
+cases where execute has been overloaded, and the
+subroutines may need to know which package context
+they were unaliased.
+
+The first case can be configured to pass the package
+in by changing it to:
+
+	$run = sub { $packge->$sub( $job ) };
+
+This will pass the package as $_[0].
+
+The first test is necessary because:
+
+	$object->can( 'Foo::bar' )
+
+alwyas returns \&Foo::bar, which called as $que->$sub
+puts a stringified version of the object into $_[0],
+and getting something like "2/8" is unlikely to be
+useful as an argument.
+
+The last is mainly designed to handle subroutines that
+have multiple arguments which need to be computed at
+runtime:
+
+	foo = { do_this( $dir, $blah); do_that }
+
+or when scheduling legacy code that might not exit 
+zero on its own:
+
+	foo = { some_old_sub(@argz); 0 }
+
+The exit from the block will be used for the non-zero
+exit status test in the parent when the job is run.
+
+
 =head1 Notes on methods
 
 Summary by subroutine call, with notes on overloading and
@@ -1922,7 +2009,12 @@ this that I can think of.
 
 =head1 Known Bugs
 
-None... yet.
+The block-eval of code can yield all sorts of oddities
+if the block has side effects (e.g., exit()). This 
+probably needs to be better wrapped. In any case, caveat
+scriptor...
+
+The eval also needs to be better tested in test.pl.
 
 =head1 Author
 

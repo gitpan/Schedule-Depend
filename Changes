@@ -1,6 +1,32 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+0.13 Tue Apr 16 12:13:59 CDT 2002
+
+ -	Add the use of Text::Balanced::extract_codeblock
+ 	to handle anon sub's in the aliases. This allows
+	a schedule to contain valid perl blocks that will
+	be compiled and executed at runtime. 
+
+	For example:
+
+		foo = { do_this($dir) || do_that($dir) or croak "$$: Neither that nor this!" }
+
+		...
+
+		foo : bar 
+
+	Will call the do_this or do_that sub's with the 
+	value of $dir expanded in the parent process at
+	runtime. 
+	
+	Note that the code must be on a single line.
+
+	Since unalias() is called in the parent this can
+	have side effects on subsequent children (e.g., 
+	foo = {do_this(pop @dirlist)}). 
+
+
 0.12 Fri Apr 12 14:05:41 CDT 2002
 
  -	Added handling for sub's named with packages for
@@ -17,6 +43,11 @@ Revision history for Perl extension Schedule::Depend
 
 	Order of lookups is also changed, from Package::Sub
 	through method to sub.
+
+ -	Replaced assignment for $run with test for ref $que
+ 	and defined $que->{alias}{$job}. This allows false 
+	values for placeholders and avoids problems if unalias
+	is called as a class method.
 
 
 0.11 Fri Apr 12 03:46:48 CDT 2002

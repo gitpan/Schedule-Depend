@@ -42,22 +42,23 @@ my $pid	= $$;
 my $ok	= 1;
 
 my $dir		= abs_path '.';
-my $rundir	= "$dir/tmp";
+my $tmpdir	= "$dir/tmp";
 
-$ENV{RUNDIR} = $rundir;
-$ENV{LOGDIR} = $rundir;
+-d $tmpdir || mkdir $tmpdir, 02777
+	or die "$tmpdir: $!";
 
--d $rundir || mkdir $rundir, 02777
-	or die "$rundir: $!";
-
-unlink <$rundir/*>;
-
-my $defsched = <DATA> . "\ncleanup = ls -l $rundir/*\n";
+my $defsched = <DATA> . 
+qq{
+	cleanup = ls -l $tmpdir/*
+	rundir	= $tmpdir
+	logdir	= $tmpdir
+	force	= 1
+};
 
 my @defargz =
 (
-	rundir => $rundir,
-	logdir => $logdir,
+	rundir => $tmpdir,
+	logdir => $tmpdir,
 );
 
 ########################################################################
@@ -69,24 +70,18 @@ my @defargz =
 
 	use base qw( Schedule::Depend );
 
-	# unalias the jobs by converting them to a closure.
-	# this could also use "no strict 'refs'" and return
-	# \&$job to return a subroutine name;
+	# basically, forces everything in the schedule to 
+	# be PHONY.
 
 	sub unalias
 	{
 		my $que = shift;
 
-		my $job = $que->{alias}{$_[0]} || $_[0];
+		my $job = shift;
 
-		# basically, forces everything in the schedule to 
-		# be PHONY.
+		my $sub = sub { $job };
 
-		my $string = "$$: $job";
-
-		my $sub = sub { $string };
-
-		( $string, $sub )
+		$sub
 	}
 }
 
@@ -99,7 +94,7 @@ sub test_debug
 	# w/o schedule override, should run with
 	# verbose == 1.
 
-	Schedule::Depend->prepare( shift )->debug
+	Schedule::Depend->prepare( shift )->validate
 }
 
 sub test_execute
@@ -132,7 +127,7 @@ sub test_debug_execute
 
 	eval
 	{
-		my $que = Schedule::Depend->prepare( @argz )->debug
+		my $que = Schedule::Depend->prepare( @argz )->validate
 			or die "$$: Schedule::Depend failed to prepare: $@";
 
 		$que->execute;
@@ -154,18 +149,13 @@ sub test_restart
 
 sub test_derived
 {
-	print STDERR "Testing subcall w/ debug (seq $ok)\n";
+	print STDERR "Testing override w/ debug (seq $ok)\n";
 
 	my $sched = shift;
 
 	my @argz = ( @defargz, sched => $sched, verbose => 1 );
 
-	eval
-	{
-		my $que = Testify->prepare( @argz )->debug;
-		
-		$que->execute;
-	};
+	eval { Testify->prepare( @argz )->validate->execute };
 
 	die $@ if $@;
 }
@@ -199,8 +189,6 @@ sub testify
 
 	for my $maxjob ( qw(1 2 0) )
 	{
-		eval { unlink <$rundir/*.???> };
-
 		for my $debug ( '', 'debug = 1' )
 		{
 			my $sched = $defsched . "\n$debug" . "\nmaxjob = $maxjob";
@@ -213,7 +201,10 @@ sub testify
 
 				eval
 				{
+					unlink <$tmpdir/*.???>;
+
 					$subz{$sub}->( $sched );
+
 					die "$$: Forkatosis in Depend" if $$ != $pid;
 				};
 
@@ -224,7 +215,6 @@ sub testify
 					print STDERR "\nnot ok $ok\t$@\n";
 
 					++$badnews if $@;
-
 				}
 				else
 				{
@@ -264,8 +254,8 @@ sub testify
 
 		my %argz = 
 		(
-			rundir	=> $rundir,
-			logdir	=> $logdir,
+			rundir	=> $tmpdir,
+			logdir	=> $tmpdir,
 			sched	=> $sched, 
 			verbose	=> 0,
 		);
@@ -294,31 +284,29 @@ sub testify
 			foo < bar : bletch blort >
 			foo < bar    = /bin/date > $ENV{PWD}/tmp/after >
 			foo < bletch = /bin/date > $ENV{PWD}/tmp/before >
-			foo < blort  = /bin/sleep 5 >
+			foo < blort  = /bin/sleep 3 >
 		);
-
-		$DB::single = 1;
 
 		my %argz =
 		(
-			%defaultz,
-			verbose => 2,
-			sched => $sched,
+			sched	=> $sched,
+
+			maxjob	=> 1,
+			verbose	=> 2,
+
+			rundir	=> $tmpdir,
+			logdir	=> $tmpdir,
 		);
 
 		my $que = Schedule::Depend->prepare(%argz);
-
-# use for debugging the group sub
-#		$que->group( 'foo' );
 		
-		$que->debug->execute;
+		$que->validate->execute;
 	}
 
-#	eval
-#	{
-#		unlink <$rundir/*>;
-#		rmdir $rundir;
-#	};
+	eval
+	{
+		unlink <$tmpdir/*pid>;
+	};
 
 	$badnews
 }

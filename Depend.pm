@@ -7,7 +7,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.25;
+our $VERSION = 0.26;
 
 use strict;
 
@@ -58,7 +58,7 @@ my %defaultz =
 	# don't run in debug mode by default. allows
 	# safety check for testing schedules.
 
-	debug	=> 0,
+	nofork	=> 0,
 );
 
 ########################################################################
@@ -141,6 +141,8 @@ sub complete
 	my $depend = $que->{depend};
 
 	delete $queued->{$_}{$job} for @{ $depend->{$job} };
+
+	delete $que->{jobid}{$job};
 
 	if( my $cleanup = $que->can('cleanup') )
 	{
@@ -227,7 +229,7 @@ sub precheck
 			# keep going.
 
 			print "$$: Completed: $job" if $verbose;
-			print "$$: Previous status:", @linz if $que->{debug};
+			print "$$: Previous status:", @linz if $que->{nofork};
 
 			if( $que->{restart} )
 			{
@@ -451,7 +453,9 @@ sub unalias
 
 	print "$$: $idstring ($sub)" if $que->{verbose};
 
-	( $idstring, $sub )
+	$que->{idstring}{$job} = $idstring;
+
+	bless $sub, ref $que || $que
 }
 
 # we know a bit more about the speicfics of
@@ -512,28 +516,21 @@ sub shellexec
 # overloading this is heavily tied to changes
 # in unalias.
 #
+# this may be called as a sub or method, in any
+# case the closure will be the last argument.
+#
 # returning the exit status here makes avoiding
-# phorkatosis simpler and ensures that the exit
+# phorkatosis simpler since the caller can manage
+# the exit in one place, and ensures that the exit
 # status gets written to the pidfile even if
 # our parent dies while we are running.
+#
+# the caller gets back whatever the code
+# reference returns.
 
 sub runjob
 {
-	my $que = shift;
-	my $run = shift;
-
-	# the caller gets back whatever the code
-	# reference returns. anything not false
-	# gets printed (e.g., warning messages).
-	#
-	# exectution only aborts if the NUMERIC
-	# value of the return is true -- returning
-	# a text message will not abort execution.
-	#
-	# the system closures will return a numeric
-	# value w/ exit + signal.
-
-	&$run
+	&{ $_[-1] }
 }
 
 ########################################################################
@@ -593,7 +590,7 @@ sub force	{ $_[0]->{force} 	}
 sub noabort	{ $_[0]->{noabort}	}
 
 sub verbose	{ $_[0]->{verbose}	}
-sub debug	{ $_[0]->{debug} 	}
+sub nofork	{ $_[0]->{nofork} 	}
 
 # runtime status; jobs, pidz & *dir should
 # probably not be modified, but there may
@@ -605,6 +602,28 @@ sub pidz	{ $_[0]->{pidz} 	}
 
 sub rundir	{ $_[0]->{alias}{rundir} }
 sub logdir	{ $_[0]->{alias}{logdir} }
+
+sub state
+{
+	my $que = shift;
+
+	my %state = ();
+	
+	%state = 
+		(
+			alias	=> { $que->alias },
+
+			verbose	=> $que->{verbose},
+			nofork	=> $que->{nofork},
+
+			noabort	=> $que->{noabort},
+			restart	=> $que->{restart},
+			force	=> $que->{force},
+		)
+	if ref $que;
+
+	wantarray ? %state : \%state
+}
 
 ########################################################################
 # constructor.
@@ -702,7 +721,7 @@ sub prepare
 		unless ! $argz{subque} || $item->isa( __PACKAGE__ );
 
 	croak "prepare called with both deubg and restart"
-		if( $argz{debug} && $argz{restart} );
+		if( $argz{nofork} && $argz{restart} );
 
 	croak "Missing schedule list" unless $argz{sched};
 
@@ -715,25 +734,7 @@ sub prepare
 	# deal with subque by populating a hash with the things
 	# that need to be carried over.
 
-	my %oldque = ();
-
-	if( $argz{subque} )
-	{
-		# carry over the flag values
-
-		my @keyz =
-		qw(
-			verbose
-			debug
-
-			restart
-			noabort
-
-			alias
-		);
-
-		@oldque{@keyz} = @{$item}{@keyz};
-	}
+	my %oldque = $argz{subque} ? $item->state : ();
 
 	# much of this won't get used until runtime, having
 	# it all in one place simplifies life, however.
@@ -790,7 +791,7 @@ sub prepare
 	#
 	# $argz{verbose} overrides all other levels during
 	# preparation, without an argument it's either
-	# 2 (set via $que->{debug}) or defaults to 0 (not much
+	# 2 (set via $que->{nofork}) or defaults to 0 (not much
 	# output).
 	#
 	# verbose > 0 will display the input lines.
@@ -799,11 +800,6 @@ sub prepare
 	#
 	# if nothing "verbose" is set in the schedule or arg's
 	# then debug mode runs in "progress" mode for verbose.
-	#
-	# restart sets a "skip this" flag for any jobs whose
-	# pidfiles show a zero exit. this allows any dependencies
-	# to be maintained w/o having to re-run the entire que
-	# if it aborts.
 
 	unless( defined $que->{debug} )
 	{
@@ -811,18 +807,27 @@ sub prepare
 		$que->{debug}   =	$alias->{debug} ? 1 :
 							$argz{debug}	? 1 :
 							$^P;
+							
+		$que->{nofork}	=	$alias->{nofork}	? 1 :
+							$argz{nofork}		? 1 :
+							$que->{debug};
 
 		$que->{verbose} =	$alias->{verbose}	? $alias->{verbose} :
 							$argz{verbose}		? $argz{verbose} :
 							$que->{debug}		? 1	:
 							0;
-
-		$que->{restart} = $argz{restart}	? 1 : 0;
-		$que->{force}	= $argz{force}		? 1 : 0;
 	}
+	
+	# restart sets a "skip this" flag for any jobs whose
+	# pidfiles show a zero exit. this allows any dependencies
+	# to be maintained w/o having to re-run the entire que
+	# if it aborts.
 
-	# we only generate output here if the que's verbosity
-	# is above 1.
+	$que->{restart}	= $argz{restart}	if defined $argz{restart};
+	$que->{force}	= $argz{force}		if defined $argz{force};
+	$que->{abort}	= $argz{abort}		if defined $argz{abort};
+
+	# only generate output here if the que's verbosity > 1.
 
 	my $verbose = $que->{verbose} > 1;
 
@@ -840,6 +845,8 @@ sub prepare
 		s/\s+$//;
 
 		s/\s+/ /g;
+
+		s/ :$/ : /;
 	}
 
 	my @linz = grep /.+/, @{ $argz{sched} }
@@ -875,24 +882,19 @@ sub prepare
 	# of the code (e.g., via config file co-located or
 	# derived from the basename).
 	#
-	# setting a non-zero maxjob to zero could cause major
-	# pain on most systems. hence the ||= and if. basically
-	# this limits the arguments to adjusting zero maxjobs
-	# to values that are nonzero.
+	# merging in %$alias is done for sub-queues.
 
 	%$alias =
 	(
 		%defaultz,
+		%$alias,
 		map { ( split /\s+=\s+/, $_, 2 ) } grep /^[^<]+\s+=\s+/, @linz
 	);
 
-	$alias->{rundir} ||= $argz{rundir}	|| $ENV{RUNDIR}
-		or croak "$$: missing rundir";
+	$alias->{rundir} ||= $argz{rundir} or croak "$$: missing rundir";
+	$alias->{logdir} ||= $argz{logdir} or croak "$$: missing logdir";
 
-	$alias->{logdir} ||= $argz{logdir}	|| $ENV{LOGDIR}
-		or croak "$$: missing logdir";
-
-	$alias->{maxjob} ||= $argz{maxjob};
+	$alias->{maxjob} = $argz{maxjob} if defined $argz{maxjob};
 
 	print "$$: Aliases:", Dumper $alias
 		if $verbose;
@@ -1122,7 +1124,7 @@ sub prepare
 # to debug and run the que in one pass since the debug will
 # abort execution by returning undef if it fails.
 
-sub debug
+sub validate
 {
 	my $que = shift;
 
@@ -1134,8 +1136,9 @@ sub debug
 		$tmp = eval $tmp
 			or die "Failed eval of Dumped queue: $!";
 
-		$tmp->{debug}	= 1;
 		$tmp->{maxjob}	= 1;
+		$tmp->{debug}	= 1;
+		$tmp->{nofork}	= 0;
 
 		$tmp->execute
 	};
@@ -1294,36 +1297,55 @@ sub execute
 				# which is zero now that we aren't calling from
 				# the prepare method.
 
-				my ( $substring, $sub ) = $que->unalias( $job );
+				my $sub = $que->unalias( $job );
+
+				my $jobid = $que->{idstring}{$job};
 
 				# open the pidfile first, better to croak here than
 				# leave a job running w/o a pidfile.
 
 				open my $fh, '>', $que->{pidz}{$job}
 					or croak "$$: $job: $que->{pidz}{$job}: $!"
-						if $que->{debug} || $que->{skip}{$job} != CLEAN;
+						unless $que->{skip}{$job} == CLEAN;
 
 				# deal with starting up the job:
-				#	don't fork in debug mode.
+				#	don't fork in debug/nofork mode.
 				# 	put an abort message into the pidifle in abort mode.
 				#	otherwise fork-exec the thing.
+				#
+				# debug and nofork skip forking, all of the
+				# jobs run w/in this process -- bypassing
+				# all of the bookkeeping associated with forks.
+				#
+				# debug just checks for deadlocks;
+				# nofork actually runs the jobs and is intended
+				# for debugging.
 
-				if( $que->{debug} )
+				if( $que->{debug} || $que->{nofork} )
 				{
-					# skip forking in the debugger, I have enough
-					# problems already...
-
-					print "Debugging: $substring\n"
+					print "$$: Debugging: $jobid\n"
 						if $print_progress;
 
 					# make sure anyone who follows us knows about
 					# the debug pass, don't store zero to avoid
 					# problems with restart mode.
 
-					print $fh "$$\ndebug $substring\n1";
+					print "$$: Checking $que->{idstring}{$job}";
 
 					$que->dequeue( $job );
+
+					my $sub = $que->unalias( $job );
+
+					eval { $que->runjob( $sub ) unless( $que->{debug} ) };
+
+					croak "$$: Failed runjob( $job ): $@" if $@;
+
 					$que->complete( $job );
+				}
+				elsif( $que->{nofork} )
+				{
+
+
 				}
 				elsif( my $reason = $que->{skip}{$job} )
 				{
@@ -1346,7 +1368,7 @@ sub execute
 						# the pidfile can be ignored since the previous exit
 						# was clean.
 
-						print "$$: Skipping $substring on restart."
+						print "$$: Skipping $jobid on restart."
 							if $print_progress;
 					}
 					elsif( $reason == ABORT )
@@ -1360,7 +1382,7 @@ sub execute
 						# %jobz doesn't get updated here: since nothing is forked
 						# there isn't a pid to store anywhere.
 
-						print "$$: Skipping $substring on aborted prerequisite."
+						print "$$: Skipping $jobid on aborted prerequisite."
 							if $print_progress;
 
 						print $fh "Failed prerequisite in noabort mode\n-1";
@@ -1391,9 +1413,9 @@ sub execute
 					# we do have to update the pidfile, however, to show
 					# that the job was aborted.
 
-					print "$$: Skipping $substring due to: $reason";
+					print "$$: Skipping $jobid due to: $reason";
 
-					print $fh "$$\nAbort: $reason: $substring\n-1";
+					print $fh "$$\nAbort: $reason: $jobid\n-1";
 
 					$que->dequeue( $job );
 					$que->complete( $job );
@@ -1421,7 +1443,7 @@ sub execute
 
 					if( my $pid = fork )
 					{
-						print $fh "$pid\n$substring";
+						print $fh "$pid\n$jobid";
 
 						$jobz->{$pid} = $job;
 
@@ -1442,7 +1464,7 @@ sub execute
 
 						# remember to do this before closing stdout.
 
-						print "$$: Executing: $substring\n"
+						print "$$: Executing: $jobid\n"
 							if $print_detail;
 
 						# Note: make sure to exit w/in this block to
@@ -1608,7 +1630,7 @@ sub execute
 		}
 	}
 
-	print STDERR $que->{debug} ?
+	print STDERR $que->{nofork} ?
 		"$$: Debugging Completed." :
 		"$$: Execution Completed.";
 
@@ -1638,37 +1660,60 @@ Schedule::Depend
 Single argument is assumed to be a schedule, either newline
 delimited text or array referent:
 
-	my $que = Scheduler->prepare( "newline delimited schedule" );
-
-	my $que = Scheduler->prepare( [ qw(array ref of schedule lines) ] );
+	my $que = Schedule::Depend->prepare( "schedule one item per line" );
+	my $que = Schedule::Depend->prepare( [ scedule, one, item, per, array, entry] );
 
 Multiple items are assumed to be a hash, which much include the
 "sched" argument.
 
-	my $que = Scheduler->prepare( sched => "foo:bar", verbose => 1 );
+	my $que = Scheduler->prepare( sched => $sched, verbose => 1 );
 
 Object can be saved and used to execute the schedule or the schedule
 can be executed (or debugged) directly:
 
-	$que->debug;
-	$que->execute;
+	my $que = Schedule::Depend->prepare( @blah );
 
-	Scheduler->prepare( sched => $depend)->debug;
-	Scheduler->prepare( sched => $depend, verbose => 1  )->execute;
+	$que = $que->execute;
+	$que = $que->validate;
+	
+or just:
 
-Since the deubgger returns undef on a bogus queue:
+	Schedule::Depend->prepare( sched => $depend)->validate;
+	Schedule::Depend->prepare( sched => $depend, verbose => 1  )->execute;
 
-	Scheduler->prepare( sched => $depend)->debug->execute;
+	Schedule::Depend->prepare( sched => $depend)->validate->execute;
 
-The "unalias" method can be safely overloaded for specialized
-command construction at runtime; precheck can be overloaded in
-cases where the status of a job can be determined easily (e.g.,
-via /proc). A "cleanup" method may be provided, and will be
-called after each job is complete if $que->can( "cleanup" ).
 
-See notes under "unalias" and "runjob" for how jobs are
-dispatched. The default methods will handle shell code
-sub names automatically.
+The scheule is composed of jobs, aliases and groups. Dependencies
+between jobs use a ':' syntax much like make:
+
+	job1 : job2
+
+Aliases allow multiple jobs to use the same subrouine or attach
+command line information to a job:
+
+	job1 = make -wk -c /foo bar bletch;
+	job2 = Some::Module::mysub
+	job3 = methodname
+
+	job3 : job2 job1
+
+Groups are schedules within the schedule:
+
+	group : job1
+
+	group < job2 job3 job4 : job5 job6 >
+	group < job3 : job5 >
+
+
+The unalias method returns closures blessed into the que's class
+and can be used as a general dispatch mechanism:
+
+	my $sub = $que->unalias( 'job1' );
+
+	my $return = $que->runjob;
+	my $return = $sub->runjob;
+	my $return = &$sub;
 
 =head1 Arguments
 
@@ -1802,7 +1847,7 @@ schedule settings overriding the args. If no verbose
 setting is made then debug runs w/ verobse == 1,
 non-debug execution with  verbose == 0.
 
-=item debug
+=item validate
 
 Runs the full prepare but does not fork any jobs, pidfiles
 get a "Debugging $job" entry in them and an exit of 1. This
@@ -2298,10 +2343,8 @@ scheduling patterns, just reduce any dealays in the schedule.
 
 =head2 Note on calling convention for closures from unalias.
 
-Remember that unalias returns two items, an id string and 
-closure:
 
-	my ( $substring, $sub ) = unalias $job;
+	$sub = unalias $job;
 
 The former is printed for error and log messages, the latter
 is executed via &$sub in the child process.

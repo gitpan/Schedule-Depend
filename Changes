@@ -1,6 +1,28 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+0.26 Thu Jun  6 09:06:45 CDT 2002
+
+ - 	debug argument avoids calling unalias, simply checks
+ 	if the job list deadlocks. This will >>not<< process groups
+	beyond determining if they deadlock w/in the main schedule.
+	The main purpose for this is assuring that the log and run
+	directories are in place and that the que doesn't obviously
+	deadlock.
+
+ - 	nofork argument runs the que serially without forking.
+ 	This is intended mainly for debugging and allows running
+	scheduled using "perl -d" with impunity. It effectively
+	limits the maxjobs to 1 since nothing is forked, the jobs
+	are executed in an eval one by one.
+
+ -	In order to avoid conflicts with the accessor methods,
+ 	the "debug" sub has been renamed to "validate".  If someone
+	thinks of a better name warn me.
+
+ -	POD updates.
+
+
 0.25 Wed May 22 02:17:08 CDT 2002
 
  -	Blocking on job slots displays the blocked jobs if verbose > 1.

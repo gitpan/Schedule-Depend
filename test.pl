@@ -68,7 +68,7 @@ sub test_restart
 {
 	print "Testing execute w/ restart ($ok)\n";
 
-	my @argz = ( sched => shift, restart => 1 );
+	my @argz = ( sched => shift, restart => 1, verbose => 1 );
 
 	Schedule::Depend->prepare( @argz )->execute
 }

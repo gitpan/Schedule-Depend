@@ -228,10 +228,7 @@ sub precheck
 	my $que = shift;
 	my $job = shift;
 
-	# this stuff only goes out of the verbosity is
-	# at the "detail" level.
-
-	my $verbose = $que->{verbose} > 1;
+	my $verbose = $que->{verbose};
 
 	my $pidfile =
 		$que->{filz}{$job} = $que->{alias}{rundir} . "/$job.pid";
@@ -277,7 +274,7 @@ sub precheck
 			# otherwise we can just zero out the pidfile and 
 			# keep going.
 
-			print "$$: Completed: $job" if $verbose;
+			print "$$: Completed: $job" if $que->{verbose};
 
 			if( $que->{restart} )
 			{
@@ -289,7 +286,6 @@ sub precheck
 				if( $exit eq '0' )
 				{
 					# no reason to re-run this job.
-					# note: this is always reprinted.
 					
 					print "$$: Marking job for skip on restart: $job";
 
@@ -297,26 +293,21 @@ sub precheck
 				}
 				else
 				{
-					print "$$:	$job previous non-zero exit, will be re-run"
-						if $verbose;
+					print "$$:	$job previous non-zero exit, will be re-run";
 				}
 			}
 			else
 			{
-				print "$$: Not Running:  $job" if $que->{verbose}
-					if $verbose;
+				print "$$: Not Running:  $job" if $que->{verbose};
 			}
 		}
 		elsif( @linz )
 		{
-			# preparing the queue when one of the scheduled
-			# jobs is running "error".
-			#
 			# here's where the fun part starts. for now i'll
 			# punt: anything without an exit status is assumed
 			# to be running.
 
-			print STDERR "\n$$:	Pidfile without exit: $job";
+			print STDERR "$$:	Pidfile without exit: $job";
 
 			$running = 1;
 		}
@@ -348,8 +339,7 @@ sub precheck
 
 	if( $que->{skip}{$job} || $running )
 	{
-		print "\n$$: Leaving existing pidfile untouched\n"
-			if $verbose;
+		print STDERR "\n$$: Leaving existing pidfile untouched\n";
 	}
 	else
 	{
@@ -463,23 +453,12 @@ sub prepare
 	# pidfiles show a zero exit. this allows any dependencies
 	# to be maintained w/o having to re-run the entire que
 	# if it aborts.
-	#
-	# $argz{verbose} overrides all other levels during
-	# preparation, without an argument it's either 
-	# 2 (set via $que->{debug}) or defaults to 0 (not much
-	# output).
-	#
-	# verbose > 0 will display the input lines.
-	# verobse > 1 additionally displays each alias/dependency
-	# as it is processed.
 
 	$que->{debug}   =	$alias->{debug} ? 1 :
 						$argz{debug}	? 1 :
 						$^P;
 
-	$que->{verbose} =	$argz{verbose} ? $argz{verbose} :
-						$que->{debug}  ? 2 :
-						0;
+	$que->{verbose} =	$argz{verbose}	? 1 : $que->{debug};
 
 	$que->{restart} = $argz{restart} ? 1 : 0;
 
@@ -501,7 +480,7 @@ sub prepare
 		or croak "build_queue called with empty depend list.";
 
 	print "\nPreparing Schedule From:", @linz, ''
-		if $que->{verbose} > 0;
+		if $que->{verbose};
 
 	# step 1: deal with information in the aliases.
 	#
@@ -530,15 +509,14 @@ sub prepare
 		map { ( split /\s*=\s*/, $_, 2 ) } grep /=/, @linz
 	);
 
-	print "\n$$: Aliases:", Dumper $alias
-		if $que->{verbose} > 1;
+	print STDERR "\n$$: Aliases:", Dumper $alias;
 
 	croak "$$: Negative maxjob: $alias->{maxjob}" 
 		if $alias->{maxjob} < 0;
 
 	for( $alias->{rundir}, $alias->{logdir} )
 	{
-		print "$$: Checking: $_" if $que->{verbose} > 1;
+		print "$$: Checking: $_" if $que->{verbose};
 
 		-e		|| croak "Non-existant:  $_";
 		-w _	|| croak "Un-writable:   $_";
@@ -552,8 +530,7 @@ sub prepare
 	# items without '=' are the sequence information, items
 	# with '=' in them have already been dealt with above.
 
-	print "\n$$: Starting rule processing"
-		if $que->{verbose} > 1;
+	print "\n$$: Starting rule processing" if $que->{verbose};
 
 	for( grep { ! /=/ } @linz )
 	{
@@ -562,8 +539,7 @@ sub prepare
 		croak "$$: Bogus rule '$_' has no targets"
 			unless $a;
 
-		print "\n$$: Processing rule: '$_'\n"
-			if $que->{verbose} > 1;
+		print "\n$$: Processing rule: '$_'\n" if $que->{verbose};
 
 		# step 1: validate the job status. this includes
 		# checking if any are already running or if we
@@ -749,13 +725,8 @@ sub execute
 	my $print_progress	= $que->{verbose} > 0;
 	my $print_detail	= $que->{verbose} > 1;
 
-	# this intentionally goes to STDERR so that the
-	# logs have a start/completion message in them
-	# at least.
-
-	print STDERR $que->{debug}  ?
-		"\n$$: Debugging:\n", Dumper $que, "\n" :
-		"\n$$: Beginning Execution\n";
+	print STDERR "\n$$: Debugging:\n", Dumper $que, "\n"
+		if $que->{debug};
 
 	# housekeeping: set run-specific variables to 
 	# reasonable values.
@@ -856,7 +827,7 @@ sub execute
 
 				my $run = $que->unalias( $job );
 
-				print "\n$$: Unalias: $job => $run\n"
+				print STDERR "\n$$: Unalias: $job => $run\n"
 					if $print_detail;
 
 				# open the pidfile first, better to croak here than
@@ -877,7 +848,7 @@ sub execute
 					# the pidfile also doesn't get updated since it
 					# already contains enough information.
 
-					print "\n\t\tSkipping $job ($run) on restart."
+					print STDERR "\n\t\tSkipping $job ($run) on restart."
 						if $print_progress;
 
 					$que->dequeue( $job );
@@ -908,7 +879,7 @@ sub execute
 					# we do have to update the pidfile, however, to show
 					# that the job was aborted.
 
-					print "\n\t\tSkipping $job ($run) due to schedule abort.";
+					print STDERR "\n\t\tSkipping $job ($run) due to schedule abort.";
 
 					print $fh "$$\nabort $job ($run)\n-1\n";
 
@@ -948,8 +919,8 @@ sub execute
 
 						if( $print_detail )
 						{
-							print "\n$$: Forked $pid: $job\n";
-							print "\n$$: Queued Jobs: $curjob\n";
+							print STDERR "\n$$: Forked $pid: $job\n";
+							print STDERR "\n$$: Queued Jobs: $curjob\n";
 						}
 					}
 					elsif( defined $pid )
@@ -1043,7 +1014,7 @@ sub execute
 			my $job = $jobz->{$pid}
 				or die "$$: unknown pid $pid";
 
-			print "\n$$: Exit: $job ($pid) $status\t$que->{filz}{$job}\n"
+			print STDERR "\n$$: Exit: $job ($pid) $status\t$que->{filz}{$job}\n"
 				if $print_detail;
 
 			open my $fh, '>>',  $que->{filz}{$job}
@@ -1069,7 +1040,7 @@ sub execute
 			}
 			else
 			{
-				print "\n$$: Successful: $job ($pid).\n"
+				print STDERR "\n$$: Successful: $job ($pid).\n"
 					if $print_progress;
 			}
 
@@ -1088,10 +1059,8 @@ sub execute
 
 		}
 	}
-
-	print STDERR $que->{debug} ?
-		"\n\n$$: Debugging Completed.\n" :
-		"\n\n$$: Execution Completed.\n";
+	print "\n\n$$: The queue has been debugged successfully"
+		if $que->{debug};
 
 	0
 }
@@ -1176,23 +1145,6 @@ referent) or with the "depend" key as a hash value:
 =item verbose
 
 Turns on verbose execution for preparation and execution.
-
-All output controlled by verbosity is output to STDOUT;
-errors, roadkill, etc, are written to STDERR.
-
-verbose == 0 only displays a few fixed preparation and 
-execution messages. This is mainly intended for production
-system with large numbers of jobs where searching a large
-output would be troublesome.
-
-verbose == 1 displays the input schedule contents during
-preparation and fork/reap messages as jobs are started.
-
-verbose == 2 is intended for monitoring automatically
-generated queues and debugging new schedules. It displays
-the input lines as they are processed, forks/reaps, 
-exit status and results of unalias calls before the jobs
-are exec-ed.
 
 =head1 Description
 

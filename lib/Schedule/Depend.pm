@@ -7,7 +7,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.28;
+our $VERSION = 0.29;
 
 use strict;
 
@@ -712,10 +712,32 @@ sub prepare
 	#
 	# 	won't do much good trying to create a sub-que 
 
-	croak "\nOdd number of arguments"
-		if @_ > 1 && @_ % 2;
+	croak "\n$$: Missing schedule argument"
+		unless @_;
 
-	my %argz = @_ > 1 ? @_ : ( sched => $_[0] );
+	my %argz = ();
+
+	if( @_ > 1 )
+	{
+		# treat it as a list for hash assignment 
+
+		croak "\n$$: Odd number of arguments"
+			if @_ > 1 && @_ % 2;
+
+		%argz = @_;
+	}
+	elsif( ref $_[0] )
+	{
+		# treat it as a hash reference
+
+		%argz = %{ $_[0] };
+	}
+	else
+	{
+		# it's a scalar string with the schedule in it
+
+		$argz{sched} = $_[0];
+	}
 
 	croak "$$: Bogus prepare: cannot prepare a subque without a que"
 		unless ! $argz{subque} || $item->isa( __PACKAGE__ );

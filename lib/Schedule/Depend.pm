@@ -7,7 +7,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.32;
+our $VERSION = 0.33;
 
 use strict;
 
@@ -82,7 +82,7 @@ my %defaultz =
 	# completing any portions of the que that do not depend
 	# on a failed job before exiting.
 
-	nofork	=> $^P,		# run the jobs w/o forking.
+	nofork	=> 0,		# run the jobs w/o forking.
 	debug	=> 0,		# debug mode does not run anything.
 	verbose	=> 0,		# verbosity == integer level.
 
@@ -107,6 +107,14 @@ my %defaultz =
 
 	logdir	=> '',
 	rundir	=> '',
+
+	# used to prefix logdir and rundir entries with the
+	# group name to avoid basename collisions for jobs
+	# aliased in mutiple groups.
+
+	group => '',
+
+
 
 );
 
@@ -224,6 +232,14 @@ sub precheck
 	my $que = shift;
 	my $job = shift;
 
+	# basenames of jobs w/in groups are prefixed by
+	# the group name. this allows the same job to be
+	# re-aliased in mutiple groups w/o file collisions.
+
+	my $group = $que->{attrib}{group};
+
+	$group .= '-' if $group;
+
 	# this stuff only goes out of the verbosity is
 	# at the "detail" level.
 
@@ -235,13 +251,13 @@ sub precheck
 	my $base = basename $job;
 
 	my $pidfile =
-		$que->{pidz}{$job} = $que->{attrib}{rundir} . "/$base.pid";
+		$que->{pidz}{$job} = $que->{attrib}{rundir} . "/$group$base.pid";
 
 	my $outfile =
-		$que->{outz}{$job} = $que->{attrib}{logdir} . "/$base.out";
+		$que->{outz}{$job} = $que->{attrib}{logdir} . "/$group$base.out";
 
 	my $errfile =
-		$que->{errz}{$job} = $que->{attrib}{logdir} . "/$base.err";
+		$que->{errz}{$job} = $que->{attrib}{logdir} . "/$group$base.err";
 
 	print "$$: Precheck: $job" if $verbose;
 
@@ -627,7 +643,7 @@ sub shellexec
 # the caller gets back whatever the code
 # reference returns.
 
-sub runjob { &{ $_[-1] } }
+sub runjob { $_[-1]->() }
 
 ########################################################################
 # few bits of information, saves extra hard-coding of structure info.
@@ -673,7 +689,7 @@ sub alias
 	}
 }
 
-# arguments
+# arguments & config info
 
 sub restart	{ $_[0]->{attrib}{restart}	}
 sub force	{ $_[0]->{attrib}{force} 	}
@@ -690,9 +706,11 @@ sub logdir	{ $_[0]->{attrib}{logdir} }
 # be modified, but there may be a reason so
 # the references are returned.
 
-sub failure	{ $_[0]->{failure}	}
 sub jobz	{ $_[0]->{jobz} 	}
 sub pidz	{ $_[0]->{pidz} 	}
+
+sub failure	{ $_[0]->{failure} || '' }
+*errstr = \&failure;
 
 ########################################################################
 # deal with groups & sub-queues.
@@ -711,7 +729,8 @@ sub pidz	{ $_[0]->{pidz} 	}
 sub group
 {
 	my $que		= shift;
-	my $name	= shift or croak "$$: Bogus rungroup: missing group argument.";
+	my $name	= shift
+		or croak "$$: Bogus rungroup: missing group argument.";
 
 	my $sched = $que->{group}{$name}
 		or croak "$$: Bogus rungroup for $name: missing group entry in que";
@@ -719,16 +738,11 @@ sub group
 	print "$$: Preparing subque $name:\n", Dumper $sched
 		if $que->verbose > 1;
 
-	eval
-	{
-		# $subque for debugging.
+	# caller gets back the result of running the schedule.
+	# since this is normally called from execute, it is
+	# already wrapped in an eval to begin with.
 
-		my $subque = $que->subque( $sched );
-		
-		$subque->execute;
-	};
-
-	croak "$$: group $name: $@" if $@
+	$que->subque( $sched )->execute
 }
 
 # this is meaningless unless the object used
@@ -951,8 +965,11 @@ sub prepare
 	# out comments and blank lines, we are then left with
 	# valid dependencies.
 	#
-	# The only lines that really matter will have a ':' or '='
+	# the only lines that really matter will have a ':' or '='
 	# in them for "job : target" or "alias = assignment" entries.
+	#
+	# one common, easily fixed, mistake is "foo:" instead of "foo :".
+	# the cleanups handle "foo :" -> "foo : " and "foo:" -> "foo :".
 
 	for( @{ $argz{sched} } )
 	{
@@ -960,12 +977,15 @@ sub prepare
 		s/^\s+//;
 		s/\s+$//;
 
-		s/\s+/ /g;
-
 		# avoids problems with empty rules ending in : not having
 		# a [^:] to parse on the end.
 
-		s/ :$/ : /;
+		s/:$/ : /;
+
+		# bit of a cleanup: all remaining whitespace is
+		# set to single spaces.
+
+		s/\s+/ /g;
 	}
 
 	my @linz = grep /.+/, @{ $argz{sched} }
@@ -986,8 +1006,13 @@ sub prepare
 	# other simple types lines cannot have '=' in them and
 	# alaises cannot have a '<' on the left side of the '='
 	# so the grep filters aliases out easily enough.
+	#
+	# the initial %$alias handles inerited aliases, with
+	# the map silently overriding anything inherited.
 
 	%$alias =
+	(
+		%$alias,
 		map
 		{
 			# find anything that isn't a % or < (inline
@@ -997,7 +1022,8 @@ sub prepare
 
 			/^([^%<]+)\s+=\s+(.+)/ ? ( $1, $2 ) : ()
 		}
-		@linz;
+		@linz
+	);
 
 	print "$$: Aliases:", Dumper $alias if $verbose;
 
@@ -1078,7 +1104,7 @@ sub prepare
 	# merging in any existing attrib settings is done in
 	# order to handle sub-queues.
 
-	$attrib->{nofork}	||= $^P;
+	$attrib->{nofork}	||= $^P unless @::ttyz;
 
 	$attrib->{verbose}	||= 1 if $attrib->{debug};
 
@@ -1134,6 +1160,8 @@ sub prepare
 		my ( $name, $sched ) = ( $1, $2 );
 
 		print "$$: Adding group: $_" if $verbose;
+
+		$group->{$name} ||= [ "group % $name" ];
 
 		push @{ $group->{$name} }, $sched;
 
@@ -1385,8 +1413,8 @@ sub execute
 	# debug mode always runs w/ verbose == 2 (i.e., sets
 	# $print_detail).
 
-	my $print_progress	= $que->verbose > 0;
-	my $print_detail	= $que->verbose > 1;
+	my $print_progress	= $attrib->{verbose} > 0;
+	my $print_detail	= $attrib->{verbose} > 1;
 
 	# this intentionally goes to STDERR so that the
 	# logs have a start/completion message in them
@@ -1667,6 +1695,29 @@ sub execute
 					# pidfiles in the prepare would be a nice way to allow
 					# for automatic restarts.
 
+					# if we got here in debug mode then
+					# make reeeeel sure to have a valid
+					# tty out there or exit immediately.
+
+					if( $^P )
+					{
+						exit -1
+							unless my $tty = shift @::ttyz;
+
+						for( 'pts', 'dev' )
+						{
+							last if -e $tty;
+
+							$tty = "$_/$tty";
+						}
+
+						-e $tty or exit -2;
+
+						$DB::fork_TTY = $tty;
+					}
+
+					$DB::single = 1;
+
 					if( my $pid = fork )
 					{
 						print $fh "$pid\n$jobid";
@@ -1700,7 +1751,6 @@ sub execute
 
 						unless( $attrib->{ttylog} )
 						{
-
 							my $outpath = $que->{outz}{$job};
 							my $errpath = $que->{errz}{$job};
 
@@ -1725,7 +1775,7 @@ sub execute
 						# Note: child never reaches the point where $fh
 						# is closed in the main loop.
 
-						my $result = $que->runjob( $sub );
+						my $result = eval { $que->runjob( $sub ) } || $@;
 
 						print $fh $result;
 
@@ -1736,7 +1786,7 @@ sub execute
 
 						no warnings;
 
-						my $exit = $result + 0;
+						my $exit = $@ ? -1 : $result + 0;
 
 						warn "$$: $job: $exit" if $exit;
 
@@ -1803,6 +1853,8 @@ sub execute
 
 		if( (my $pid = wait) > 0 )
 		{
+			$DB::single = 1;
+
 			my $status = $?;
 
 			my $job = $jobz->{$pid}
@@ -1839,7 +1891,7 @@ sub execute
 				{
 					print STDERR "\n$$: Aborting further job startup.\n";
 
-					$que->{failure} = "Nonzero exit from $pid";
+					$que->{failure} = "Nonzero exit from $job ($pid)";
 				}
 				else
 				{
@@ -1873,7 +1925,9 @@ sub execute
 
 	$que->{executed} = 1;
 
-	0
+	# die or hand back zero...
+
+	$que->{failure} ? -1 : 0
 }
 
 # keep the use pragma happy

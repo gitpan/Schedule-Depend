@@ -1,6 +1,21 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+
+0.33 Mon Mar 15 23:07:33 CST 2004
+
+ - Added use of @::ttyz to fork handler for easier 
+   debugging of multi-level forks. Pre-opened term's
+   can be listed in the global variable, which is 
+   shifted off before each fork. This simplifies
+   multi-level debugs (e.g., for groups).
+
+ - execute does a better job of handling non-zero group
+   exits and die's. They are stored in the $que object
+   along with being handed back via exit status.
+
+ - Doc bugs.
+
 0.31 Sat Jan  4 21:40:03 CST 2003
 
  - 	Fixed noabort mode (works like "make -k"). Passing in 

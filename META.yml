@@ -1,14 +1,17 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         Schedule-Depend
-version:      0.34
-version_from: lib/Schedule/Depend.pm
+version:      1.1
+version_from: 
 installdirs:  site
 requires:
     Carp:                          0
     constant:                      0
+    Cwd:                           2.12
     Data::Dumper:                  2.102
     File::Basename:                2.6
+    FindBin:                       1.44
+    FindBin::libs:                 1
     strict:                        0
 
 distribution_type: module

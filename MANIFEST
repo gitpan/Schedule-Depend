@@ -3,5 +3,6 @@ MANIFEST
 Makefile.PL
 README
 lib/Schedule/Depend.pm
+lib/Schedule/Depend/Execute.pm
 test.pl
 META.yml                                 Module meta-data (added by MakeMaker)

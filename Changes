@@ -1,6 +1,32 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+1.00 Fri Apr  9 01:28:58 CDT 2004
+
+- Added Schedule::Depend::Execute, S::D::Config,
+  S::D::Utilities to simplify generating #! code and
+  methods for schedules. Execute exports "runsched"
+  to handle running or debugging the schedules. The
+  user supplies one more module to define a defaults
+  hash and the #! code can be 4 lines. Minor changes
+  to the S::D module were required, mainly cleanus
+  in the group code.
+
+- Utilities includes logging, nastygrams, progress
+  mail, directory sanity checks, local path generation.
+
+- Config handles extracting relavant portions of the
+  main config hash. This is mainly for use in methods
+  since they can use "$que->moduleconfig" to get a
+  hash of defaults useful in the current module.
+
+- The S::D interface is unlikely to change at this
+  point.
+
+- 2do: The added modules need more POD and tests in
+  test.pl. Handling of attributes overridden in groups
+  needs improvement.
+
 
 0.33 Mon Mar 15 23:07:33 CST 2004
 

@@ -7,13 +7,17 @@ WriteMakefile
 (
 	NAME	=> "Schedule::Depend",
 
-    VERSION_FROM	=> 'lib/Schedule/Depend.pm',
+    VERSION	=> '1.1',
 
 	(
 		$] ge '5.006001' ? 
 		(
-			ABSTRACT	=> 'Parallel process startup with dependencies and restart.',
-			AUTHOR     	=> 'Steven Lembark (slembark@knightsbridge.com)',
+			ABSTRACT	=>
+'Parallel process startup with dependencies and restart.
+Execute, Config, Utilities modules simplify generating
+#! code for running queues.',
+
+			AUTHOR     	=> 'Steven Lembark <lembark@wrkhors.com>',
 			PREREQ_PM	=> 
 			{
 				# unlikely these aren't avaialble, but can't 
@@ -26,6 +30,13 @@ WriteMakefile
 				Data::Dumper	=> 2.102,
 				File::Basename	=> 2.6,
 
+				FindBin			=> 1.44,
+
+				# these may have to be installed,
+				# used in S::D::Execute
+
+				FindBin::libs	=> 1.0,
+				Cwd				=> 2.12,
 			},
 		)
 		: ()

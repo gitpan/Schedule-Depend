@@ -7,7 +7,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.31;
+our $VERSION = 0.32;
 
 use strict;
 
@@ -46,6 +46,12 @@ use Data::Dumper;
 # package variables
 ########################################################################
 
+# elements of a parent que that are copied into the subque.
+# the attributes are managed by S::D, the user section is
+# for whatever payload data users want to insert.
+
+my @inherit = qw( attrib user alias );
+
 # default attribute values.
 
 my %defaultz =
@@ -58,7 +64,7 @@ my %defaultz =
 	# debug will not actually run anything, it only checks
 	# whether the que hangs.
 	#
-	# nofork runs all of the jobs at simple subroutine 
+	# nofork runs all of the jobs at simple subroutine
 	# calls. this behaves as though majob == 1 but won't
 	# mess up the debugger.
 	#
@@ -85,7 +91,7 @@ my %defaultz =
 	abort	=> 1,		# false behaves like make -k.
 
 	# avoid writing to .err and .out files, just use STDOUT
-	# and STDERR. mainly for debugging. the .out and .err 
+	# and STDERR. mainly for debugging. the .out and .err
 	# files are truncated to avoid leaving around stale data.
 
 	ttylog	=> 0,	# use STDOUT/ERR for logging.
@@ -131,9 +137,9 @@ my %defaultz =
 # classes might update the sort to deliver jobs with
 # more waiting jobs or which were available soonest.
 #
-# this might also base the runnable jobs on some 
+# this might also base the runnable jobs on some
 # measure of system load, etc. catch there is that
-# a lack of both running and runnable jobs will 
+# a lack of both running and runnable jobs will
 # lead to an abort due to a deadlocked que.
 
 sub ready
@@ -254,10 +260,11 @@ sub precheck
 
 	return 0 if
 		defined $que->{alias}{job} &&
-		$que->{alias}{$job} =~ /PHONY|STUB/;
-	
-	# pidfiles without an exit (lines < 3) will abort the 
-	# que preparation unless the force attribute is set.
+		$que->{alias}{$job} eq 'PHONY';
+
+	# any pidfile without an exit status implies a running job
+	# and prevents further execution. in restart mode any file
+	# with a zero exit status will be skipped.
 
 	if( -s $pidfile )
 	{
@@ -277,7 +284,7 @@ sub precheck
 			# running any longer.
 			#
 			# restart skips anything that exited zero.
-			# 
+			#
 			# otherwise we can just zero out the pidfile and
 			# keep going.
 
@@ -317,8 +324,6 @@ sub precheck
 				print "$$: Not Running:  $job" if $verbose;
 			}
 		}
-# 	no reason to require both of these.
-#		elsif( $que->{attrib}{restart} && $que->{attrib}{force} )
 		elsif( $que->{attrib}{force} )
 		{
 			# assume the thing is not running and be done with it.
@@ -340,7 +345,7 @@ sub precheck
 	{
 		# jobs with empty pidfiles are assumed to be running
 		# unless the restart or force switches are given.
-		# 
+		#
 		# Note: on Solaris or Linux this could check things
 		# via /proc or Unix::Process. Occams Razor tells me
 		# to leave this alone until it proves to be a problem.
@@ -356,8 +361,8 @@ sub precheck
 
 	# zero out the pid/log/err files if the job isn't running
 	# at this point. leaving this down here makes it simpler
-	# to update the block above if we have more than one
-	# way to decide if things are still running.
+	# to update the block above if there is more than one way
+	# to decide if things are still running.
 
 	if( $que->{skip}{$job} || $running )
 	{
@@ -366,15 +371,41 @@ sub precheck
 	}
 	else
 	{
-		# after this point it seems likely that we can open the
-		# the necessary files for write at runtime. leaving
-		# them open here doesn't save much time and is a headache
-		# if we are running in debug mode anyway.
+		# after this point it seems likely that opening the
+		# necessary files for write at runtime will succeed.
+		# leaving them open here doesn't save much time and
+		# is a headache in debug mode.
 
-		for my $path ( $pidfile, $outfile, $errfile )
+		if( open my $fh, '>', $pidfile )
 		{
-			open my $fh, '>', $path
-				or croak "Failed writing empty $path: $!";
+			print "\n$$: empty $pidfile ready";
+		}
+		else
+		{
+			die "\n$$: Failed writing empty $pidfile: $!";
+		}
+
+
+		for my $path ( $outfile, $errfile )
+		{
+			# zero out the logs if they will be written
+			# to, otherwise leave them alone. This is mainly
+			# a sanity check here, since the forked process 
+			# will write to these anyway -- makes more sense
+			# to find out that the log can't be written 
+			# before starting the execution however.
+			#
+			# assumption here is that production systems
+			# will usually run consistently with ttylog or
+			# without: usual reason for switching is a test
+			# run that probably shouldn't overwrite any 
+			# existing logs.
+
+			unless( $que->{attrib}{ttylog} )
+			{
+				open my $fh, '>', $path
+					or croak "Failed writing empty $path: $!";
+			}
 		}
 
 	}
@@ -457,6 +488,10 @@ sub unalias
 	# if $que is a referent then access its alias sub-hash
 	# and grab out the entry for this job. If it doesn't
 	# exist then return the job.
+	#
+	# non-referent first arguments would show up if unalias
+	# is used as part of another module (e.g., a dispatcher
+	# in Schedule::Cron).
 
 	my $run = ref $que && defined $que->{alias}{$job} ?
 		$que->{alias}{$job} : $job;
@@ -466,7 +501,8 @@ sub unalias
 	# before the child (stringy) exit and parent (fork
 	# return) exit lines.
 
-	my $idstring = $job eq $run ? $job : "$job ($run)";
+	$que->{idstring}{$job} = my $idstring =
+		$job eq $run ? $job : "$job ($run)";
 
 	# generate the closure.
 
@@ -474,19 +510,24 @@ sub unalias
 
 	if( $run eq 'PHONY' || $run eq 'STUB' )
 	{
-		$sub = sub { $idstring }
+		# returning the id string is fast and should be safe
+		# enough since idstrings will normally not be numeric.
+		# but just in case, prefixing it with the stub message
+		# guarantees it.
+
+		$sub = sub { "STUB $idstring" }
 	}
 	elsif( $run =~ /^({.+})$/ )
 	{
 		$sub = eval "sub $run"
-			or croak "$$: Invalid block for $job: $run";
+			or die "$$: Bogus unalias: Invalid block for $job: $run";
 	}
 	elsif( my ($p,$s) = $run =~ /^(.+)::(.+?$)$/ )
 	{
 		eval "require $p";
 
 		my $fqsub = $p->can( $s )
-			or croak "$$: Bogus $job ($run): $p cannot $s";
+			or die "$$: Bogus $job ($run): no $p->can( $s )";
 
 		$sub = sub { $fqsub->( $job ) };
 	}
@@ -500,25 +541,28 @@ sub unalias
 	}
 	else
 	{
+		# punt whatever it is to the shell as a single string.
+		# this allows the path to resolve shell commands but
+		# may require shell items with the same names as methods
+		# to have a '/' inserted in them somewheres.
+
 		$sub = sub { $que->shellexec($run) };
 	}
 
-	croak "$$: Bogus unalias: no subroutine for $idstring"
+	die "$$: Bogus unalias: no subroutine for $idstring"
 		unless $sub;
 
 	print "$$: $idstring ($sub)" if $que->verbose;
 
-	$que->{idstring}{$job} = $idstring;
-
 	bless $sub, ref $que || $que
 }
 
-# we know a bit more about the speicfics of
-# the system call. putting this into its
-# own method allows better reporting and
-# saves the caller from having to figure
-# out what a shell vs. subroutine return
-# means.
+# call. putting this into its own method allows better
+# reporting and saves the caller from having to figure
+# out what a shell vs. subroutine return means: returning
+# non-zero to the dispatcher which will report the job as
+# failed. Since this checks both the return value of system
+# and $? it will catch whatever can be handled automatically.
 
 sub shellexec
 {
@@ -574,44 +618,25 @@ sub shellexec
 # this may be called as a sub or method, in any
 # case the closure will be the last argument.
 #
-# the caller deals with exiting and avoiding 
-# phorkatosis.
+# returning the exit status here makes avoiding
+# phorkatosis simpler since the caller can manage
+# the exit in one place, and ensures that the exit
+# status gets written to the pidfile even if the
+# parent process dies while this is running.
 #
-# assumption here is that if the closure returns
-# anything useful it won't have died -- thus any
-# $@ will only be associated with an empty $result.
+# the caller gets back whatever the code
+# reference returns.
 
-sub runjob
-{
-	if( my $result = eval{ &{ $_[-1] } } )
-	{
-		# this gets written to the pidfile, along with 
-		# $result + 0 (i.e., numeric value).
-
-		$result
-	}
-	elsif( $@ )
-	{
-		# return a string that evaluates to nonzero.
-
-		print STDERR "Roadkill: $@";
-
-		-1
-	}
-	else
-	{
-		# return something more descriptive; allows 
-		# "return 0" to put a message in the pidfile.
-
-		'False return, assuming success'
-	}
-}
+sub runjob { &{ $_[-1] } }
 
 ########################################################################
 # few bits of information, saves extra hard-coding of structure info.
 # these are mainly useful for generating sub-queues with the config
 # values intact.
 ########################################################################
+
+# make a shallow copy of the attributes.
+# everything hard-coded here is at a single level anyway.
 
 sub status
 {
@@ -622,7 +647,6 @@ sub status
 	wantarray ? %attrib : \%attrib
 }
 
-# get a copy of the whole thing or just one entry.
 # note that the %{...} mess avoids external code
 # mucking around with the values -- none of the alias
 # entries are references themselves.
@@ -633,10 +657,18 @@ sub alias
 
 	if( @_ )
 	{
-		@{ $que->{alias} }{@_}
+		# hand back a sliced-up hash...
+
+		my %return = ();
+
+		@return{@_} = @{ $que->{alias} }{@_}
+
+		%return;
 	}
 	else
 	{
+		# ... or the whole thing.
+
 		%{ $que->{alias} }
 	}
 }
@@ -648,10 +680,11 @@ sub force	{ $_[0]->{attrib}{force} 	}
 sub noabort	{ $_[0]->{attrib}{abort}	}
 
 sub verbose	{ $_[0]->{attrib}{verbose}	}
+sub debug	{ $_[0]->{attrib}{debug}	}
 sub nofork	{ $_[0]->{attrib}{nofork} 	}
 
-sub rundir	{ $_[0]->{attrib}{rundir}	}
-sub logdir	{ $_[0]->{attrib}{logdir}	}
+sub rundir	{ $_[0]->{attrib}{rundir} }
+sub logdir	{ $_[0]->{attrib}{logdir} }
 
 # runtime status; these should probably not
 # be modified, but there may be a reason so
@@ -660,23 +693,6 @@ sub logdir	{ $_[0]->{attrib}{logdir}	}
 sub failure	{ $_[0]->{failure}	}
 sub jobz	{ $_[0]->{jobz} 	}
 sub pidz	{ $_[0]->{pidz} 	}
-
-##sub state
-##{
-##	my $que = shift;
-##
-##	my %state = ref $que ? 
-##		(
-##			alias	=> { %{ $que->{alias} } },
-##
-##			attrib	=> { %{ $que->{attrib} } },
-##		)
-##		:
-##		()
-##		;
-##
-##	wantarray ? %state : \%state
-##}
 
 ########################################################################
 # deal with groups & sub-queues.
@@ -687,27 +703,32 @@ sub pidz	{ $_[0]->{pidz} 	}
 #
 #	name = rungroup
 #
-#	name < blah >
+#	name ~ job [job...]
 #
-# the first <> line creates $que->{group}{$name}, which is then
-# processed here (if name is not already aliased).
-#
-# this would normally be called from runjob, which wraps the call
-# in an eval. net result is that this code can die w/o fear.
+# the ~ line creates $que->{group}{$name}, which is then
+# processed here.
 
 sub group
 {
 	my $que		= shift;
-	my $name	= shift
-		or croak "$$: Bogus rungroup: missing group argument.";
+	my $name	= shift or croak "$$: Bogus rungroup: missing group argument.";
 
 	my $sched = $que->{group}{$name}
-		or croak "$$: Bogus group '$name': missing/empty group entry in que";
+		or croak "$$: Bogus rungroup for $name: missing group entry in que";
 
-	print "$$: Preparing group $name:\n", Dumper $sched
+	print "$$: Preparing subque $name:\n", Dumper $sched
 		if $que->verbose > 1;
 
-	$que->subque( $sched )->execute;
+	eval
+	{
+		# $subque for debugging.
+
+		my $subque = $que->subque( $sched );
+		
+		$subque->execute;
+	};
+
+	croak "$$: group $name: $@" if $@
 }
 
 # this is meaningless unless the object used
@@ -726,7 +747,7 @@ sub subque
 		unless @_;
 
 	my %argz = ();
-	
+
 	if( @_ > 1 )
 	{
 		# assume it's a list that can be safely assigned to a hash.
@@ -743,7 +764,7 @@ sub subque
 	}
 	else
 	{
-		# assume anything with a ref at this point is a hash -- 
+		# assume anything with a ref at this point is a hash --
 		# checking the ref type doesn't do much good since it
 		# might be blessed.
 
@@ -751,12 +772,12 @@ sub subque
 	}
 
 	# modify arguments to show that this is a subque and
-	# should inerit from the que's values. this is the 
+	# should inerit from the que's values. this is the
 	# only place that this should get set.
 
 	$argz{subque} = 1;
 
-	# caller gets back a que or the code will die 
+	# caller gets back a que or the code will die
 	# in the process of preparig with %argz.
 
 	$que->prepare( %argz )
@@ -773,7 +794,7 @@ sub prepare
 	local $/ = "\n";
 
 	# this may be a package, or a blessed object.
-	# object call may be used to overload the prepare 
+	# object call may be used to overload the prepare
 	# symbol or to generate a subque.
 
 	my $item = shift;
@@ -803,7 +824,7 @@ sub prepare
 
 	if( @_ > 1 )
 	{
-		# treat it as a list for hash assignment 
+		# treat it as a list for hash assignment
 
 		croak "\n$$: Odd number of arguments"
 			if @_ % 2;
@@ -812,13 +833,13 @@ sub prepare
 	}
 	elsif( ref $_[0] eq 'ARRAY' )
 	{
-		# assume an array referent is the schedule, 
+		# assume an array referent is the schedule,
 
 		%argz = ( sched => shift );
 	}
 	elsif( ref $_[0] )
 	{
-		# treat it as a hash reference containing the 
+		# treat it as a hash reference containing the
 		# entire schedule.
 		# queues passed in as array ref's are still hashes
 		# like ( sched => \@schedule_as_array ).
@@ -834,7 +855,10 @@ sub prepare
 
 	# turn on verbosity immediately if the arguments say so.
 
-	my $verbose = $argz{verbose} > 1 ? 1 : 0;
+	my $verbose = defined $argz{verbose} ? $argz{verbose} : 0;
+
+	croak "$$: Bogus prepare: subque set without an existing que"
+		if $argz{subque} && ! ref $item;
 
 	croak "$$: Bogus prepare: cannot prepare a subque without a que"
 		unless ! $argz{subque} || $item->isa( __PACKAGE__ );
@@ -846,19 +870,16 @@ sub prepare
 
 	# make sure it is an array reference.
 
-	$argz{sched} = [ split "\n", $argz{sched} ] 
+	$argz{sched} = [ split "\n", $argz{sched} ]
 		unless ref $argz{sched};
 
-	# leave any further tests of whether the attrib element 
+	# leave any further tests of whether the attrib element
 	# of $item is useful for the next step.
-
-	croak "$$: Bogus prepare: subque set without an existing que"
-		if $argz{subque} && ! ref $item;
 
 	# much of this won't get used until runtime, having
 	# it all in one place simplifies life, however.
 
-	my %newque = 
+	my %newque =
 	(
 		# defined by the schedule.
 
@@ -869,7 +890,7 @@ sub prepare
 
 		# attributes are slightly different from aliases in
 		# that they describe the que object's behavior where
-		# aliases are used to define the behavior of the 
+		# aliases are used to define the behavior of the
 		# schedule. there is no functional reason that they
 		# cannot be stored together; separating them avoids
 		# namespace collisions and simplifies inheritence of
@@ -878,7 +899,7 @@ sub prepare
 		# these are the defaults for new queues..
 
 		attrib	=> { %defaultz },
-		alias	=> {},	
+		alias	=> {},
 
 		# bookkeeping of forked proc's.
 
@@ -888,13 +909,27 @@ sub prepare
 		pidz	=> {},	# $que->{pidz}{$job} = $job.pid path
 		outz	=> {},	# $que->{pidz}{$job} = $job.out path
 		errz	=> {},	# $que->{pidz}{$job} = $job.err path
+
+		executed => 0,	# this hasn't run before
+
+		# grab this as-is from the aruments if it's passed.
+		# aside from inheritence from parent queues it isn't
+		# managed here.
+
+		user	=> ( exists $argz{user} ? $argz{user} : '' ),
+
 	);
 
 	# subques inherit their parents attributes, which are
-	# overridden by explicit arguments and the que's own
-	# attribute settings.
+	# overridden by explicit arguments and the que's user
+	# data area. note that these override anything passed
+	# in as arguments.
 
-	$newque{attrib} = { %{ $item->{attrib} } } if $argz{subque};
+	if( $argz{subque} )
+	{
+		exists $item->{$_} and $newque{$_} = $item->{$_}
+			for( @inherit );
+	}
 
 	# from this point onward the construction of a que and
 	# a sub-que are the same.
@@ -902,6 +937,8 @@ sub prepare
 	my $que = bless \%newque, ref $item || $item;
 
 	# syntatic sugar, minor speedup.
+	# nothing happens to the user entry here so there is
+	# no separate reference for it.
 
 	my $depend	= $que->{depend};
 	my $queued	= $que->{queued};
@@ -946,19 +983,21 @@ sub prepare
 	# with the right-hand side stored as-is in a hash for
 	# later use in unalias.
 	#
-	# other simple types lines cannot have '=' in them and 
+	# other simple types lines cannot have '=' in them and
 	# alaises cannot have a '<' on the left side of the '='
 	# so the grep filters aliases out easily enough.
 
 	%$alias =
-	(
 		map
 		{
-			( split /\s+=\s+/, $_, 2 )
+			# find anything that isn't a % or < (inline
+			# attribute or group definition) that has an
+			# "=" surrounded by space and save it; or
+			# give back nothing.
+
+			/^([^%<]+)\s+=\s+(.+)/ ? ( $1, $2 ) : ()
 		}
-		grep /^[^%<]+\s+=\s+/,
-		@linz
-	);
+		@linz;
 
 	print "$$: Aliases:", Dumper $alias if $verbose;
 
@@ -977,11 +1016,11 @@ sub prepare
 	# where the word is all word characters ( i.e., cannot
 	# contain either '=' or '<'.
 	#
-	# the map hands back an arrary of 2-element arrays of 
+	# the map hands back an arrary of 2-element arrays of
 	# the attribute keys and their values.
 
 	# first step is to grab any attributes that were passed
-	# in as arguments. these are reserved words defined in 
+	# in as arguments. these are reserved words defined in
 	# %defaultz.
 
 	for ( keys %defaultz )
@@ -995,14 +1034,13 @@ sub prepare
 	(
 		map
 		{
-			my @a = /(\w+)\s+%\s+(.+)/;
-			@a ? \@a : ()
+			/^(\w+)\s+%\s+(.+)/ ? [ $1, $2 ] : ()
 		}
 		@linz
 	)
 	{
 		print STDERR "$$: Ad Hoc Attribute: $_->[0] % $_->[1]"
-			unless defined $defaultz{ $_->[0] };
+			unless exists $defaultz{ $_->[0] };
 
 		$attrib->{ $_->[0] } = $_->[1];
 	}
@@ -1010,7 +1048,8 @@ sub prepare
 	$attrib->{rundir} or croak "$$: Bogus que args: missing rundir";
 	$attrib->{logdir} or croak "$$: Bogus que args: missing logdir";
 
-	$attrib->{maxjob} >= 0 or croak "$$: Bogus que args: negative maxjob";
+	$attrib->{maxjob} >= 0
+		or croak "$$: Bogus que args: negative maxjob";
 
 	# sanity check the attributes and handle dependencies
 	# between them.
@@ -1039,19 +1078,20 @@ sub prepare
 	# merging in any existing attrib settings is done in
 	# order to handle sub-queues.
 
-	$attrib->{nofork} ||= $^P;
+	$attrib->{nofork}	||= $^P;
 
-	$attrib->{verbose} ||= 1 if $attrib->{debug};
-	
+	$attrib->{verbose}	||= 1 if $attrib->{debug};
+
+	croak "$$: Negative maxjob: $attrib->{maxjob}"
+		if $attrib->{maxjob} < 0;
+
 	# reset the verbosity using the schedule along with
-	# the arguments -- previous setting was done using 
+	# the arguments -- previous setting was done using
 	# arguments only.
 
 	$verbose = $attrib->{verbose} > 1;
 
-
-	croak "$$: Negative maxjob: $attrib->{maxjob}"
-		if $attrib->{maxjob} < 0;
+	# sanity check the directories.
 
 	for( $attrib->{rundir}, $attrib->{logdir} )
 	{
@@ -1064,7 +1104,7 @@ sub prepare
 	}
 
 	# at this point the parent que settings, prepare arguments,
-	# and defaults have been merged into the current que's and 
+	# and defaults have been merged into the current que's and
 	# basic sanity checks run.
 
 	# now deal with groups.
@@ -1083,7 +1123,7 @@ sub prepare
 	# telling in advance how many entries might be
 	# in a single group.
 	#
-	# requiring word char's for the group name 
+	# requiring word char's for the group name
 	# avoids any '=' before the '<' and allows
 	# aliases to use redirection.
 
@@ -1099,7 +1139,7 @@ sub prepare
 
 		# insert the group alias if the user didn't.
 		# there might already be an alias if the schedule
-		# uses another method to handle the group or 
+		# uses another method to handle the group or
 		# this is not the first line of the schedule.
 
 		$alias->{$name} ||= 'group';
@@ -1286,7 +1326,7 @@ sub validate
 		my $a = Dumper $que;
 		my $b = eval "$a";
 
-		ref $b 
+		ref $b
 			or die "Failed to generate tmp que for debug: $!";
 
 		$b->{attrib}{maxjob}	= 1;
@@ -1295,14 +1335,14 @@ sub validate
 
 		$b->execute;
 
-		print STDERR "$$: Validation completed\n"
+		print "$$: Validation completed\n"
 			if $que->verbose;
 	};
 
 	print STDERR "\n$$: Debug Failure: $@" if $@;
 
 	# caller gets back original object for daisy-chaining or
-	# undef (which will abort further execution if it is 
+	# undef (which will abort further execution if it is
 	# daisychained).
 
 	$@ ? undef : $que;
@@ -1318,6 +1358,9 @@ sub execute
 	local $| = 1;
 
 	my $que = shift;
+
+	croak "\n$$: Bogus execute: this que has already executed."
+		if( $que->{executed} );
 
 	# after execute has been called once the que cannot be
 	# re-run since the queued array has been consumed.
@@ -1342,8 +1385,8 @@ sub execute
 	# debug mode always runs w/ verbose == 2 (i.e., sets
 	# $print_detail).
 
-	my $print_progress	= $attrib->{verbose} > 0;
-	my $print_detail	= $attrib->{verbose} > 1;
+	my $print_progress	= $que->verbose > 0;
+	my $print_detail	= $que->verbose > 1;
 
 	# this intentionally goes to STDERR so that the
 	# logs have a start/completion message in them
@@ -1357,7 +1400,7 @@ sub execute
 	}
 	else
 	{
-		print STDERR "$$: Beginning Execution";
+		print "$$: Beginning Execution";
 	}
 
 	# use for logging messages to make sure that the jobs are
@@ -1378,10 +1421,6 @@ sub execute
 	# here avoids screwing up the caller's settings.
 
 	local $SIG{HUP}		= 'IGNORE';
-
-	# necessary to avoid wait returning -1 due to automatically
-	# reaped child proc's.
-
 	local $SIG{CHLD}	= 'DEFAULT';
 
 	local $SIG{INT}		= sub { $que->{failure} = "Scheduler aborted by SIGINT" };
@@ -1500,8 +1539,8 @@ sub execute
 				elsif( $attrib->{nofork} )
 				{
 					# don't fork, just get the sub and eval it
-					# w/in this process. execution gets here 
-					# in the perl debugger or if nofork is 
+					# w/in this process. execution gets here
+					# in the perl debugger or if nofork is
 					# passed in as an argument when creating
 					# the que.
 					#
@@ -1517,19 +1556,24 @@ sub execute
 
 					my $sub = $que->unalias( $job );
 
-					# run the job w/in this process; 
+					# run the job w/in this process;
 					# aborting the entire que if this job
 					# fails.
 
 					my $exit = $que->runjob( $sub );
 
-					print "$$: Result of $jobid: $exit";
+					print "$$: Result of $jobid: " . $exit;
 
 					print $fh $exit;
-					print $fh $exit + 0;
+
+					{
+						# avoid warnings about non-numerics in addition
+						$^W = 0;
+						print $fh $exit + 0;
+					}
 
 					$que->complete( $job );
-				}	
+				}
 				elsif( my $reason = $que->{skip}{$job} )
 				{
 					# $que->{skip}{$job} is only set if $que->{restart}
@@ -1676,7 +1720,7 @@ sub execute
 						# printing the string to the file handle
 						# allows subroutines to return more useful
 						# completion messages -- so long as they
-						# evaluate numerically to zero.
+						# evaluate to zero.
 						#
 						# Note: child never reaches the point where $fh
 						# is closed in the main loop.
@@ -1689,11 +1733,6 @@ sub execute
 
 						# avoid logging nastygrams about non-numeric
 						# values in the + 0 step.
-						#
-						# if all goes well in the parent process this
-						# numeric exit value will written to the pidfile
-						# by the exit handler. if not then the message
-						# alone works for restarts.
 
 						no warnings;
 
@@ -1779,28 +1818,32 @@ sub execute
 
 			close $fh;
 
+			# deal with non-zero exits: anything that depends on 
+			# this job will be skipped; depending on the "abort"
+			# attribute value the whole que will be stubbed.
+
 			if( $status )
 			{
 				print STDERR "\n$$: $job Non-zero exit: $status\n";
 
-				if( $que->{abort} )
-				{
-					# this will cascade to other jobs that depend on
-					# this one, forcing them to be skipped in the que.
-					#
-					# note that $que->{failure} doesn't get updated
-					# here, since the que isn't aborting, just the
-					# dependencies for this job.
+				# this will cascade to other jobs that depend on
+				# this one, forcing them to be skipped in the que.
 
-					print STDERR "\n$$: Cascading abort skip to dependent jobs";
+				print STDERR "\n$$: Cascading abort skip to dependent jobs";
 
-					$que->{skip}{$job} = ABORT;
-				}
-				else
+				$que->{skip}{$job} = ABORT;
+
+				# next question: should the whole que abort?
+
+				if( $attrib->{abort} )
 				{
 					print STDERR "\n$$: Aborting further job startup.\n";
 
-					$que->{failure} = 'Nonzero exit';
+					$que->{failure} = "Nonzero exit from $pid";
+				}
+				else
+				{
+					print STDERR "\n$$: Noabort in effect, continuing que"; 
 				}
 			}
 			else
@@ -1820,7 +1863,7 @@ sub execute
 		}
 	}
 
-	print STDERR $que->{nofork} ?
+	print $attrib->{debug} ?
 		"$$: Debugging Completed." :
 		"$$: Execution Completed.";
 
@@ -1865,17 +1908,48 @@ can be executed (or debugged) directly:
 
 	$que = $que->validate;
 	$que = $que->execute;
-	
+
 or just:
 
-	Schedule::Depend->prepare( sched => $depend)->validate;
+	Schedule::Depend->prepare( sched => $depend )->validate;
 	Schedule::Depend->prepare( sched => $depend, verbose => 1  )->execute;
 
-	Schedule::Depend->prepare( sched => $depend)->validate->execute;
+	Schedule::Depend->prepare( $string_schedule )->validate->execute;
+
+If the $que object returned by prepare is kept then it can
+be used to update a user area: $que->{user}. The contents are
+passed through to sub-queues; aside from that it is 
+not managed by the $que object and is intended for user-space
+data. It is a convienent place for storing configuration 
+informatin that gets modified as it passes down to subqueues:
+
+	my $que = Schedule::Depend->prepare( $sched );
+
+	$que->{user} = { your config data hash here };
+
+or
+
+	my $que = Schedule::Depend->prepare( sched => $schedule, user => $config );
 
 
-The scheule is composed of jobs, aliases and groups. Dependencies
-between jobs use a ':' syntax much like make:
+allows for:
+
+	sub somejob
+	{
+		my $que = shift;
+
+		if( $que->{user}{someflag} )
+		{
+			...
+		}
+	}
+
+Blessing the value in $que->{user} can also be convienent.
+
+
+The scheule is composed of jobs, aliases, groups, and settigngs.
+
+Dependencies between jobs use a ':' syntax much like make:
 
 	job1 : job2
 
@@ -1883,14 +1957,26 @@ between jobs use a ':' syntax much like make:
 	# comments are introduced with hash marks that
 	# discard from the first hash to the end of a line.
 
+Job names can include any combination of word characters
+(numbers, letters, '_') and are separated from other jobs
+or scheduler directves by white space.
+
+
 Aliases allow multiple jobs to use the same subrouine or attach
 command line information to a job:
 
 	job1 = make -wk -c /foo bar bletch;
 	job2 = Some::Module::mysub
 	job3 = methodname
+	job4 = { print "this is a perl code block"; 0 }
 
 	job3 : job2 job1
+
+
+Will eventually call Some::Module::mysub( 'job2' ) and
+$que->methodname( 'job3' ); job1 will be passed to the
+shell unmodified; job4 will be evaled into an anonymous
+subroutine and called without arguments.
 
 Groups are schedules within the schedule:
 
@@ -1905,7 +1991,11 @@ having to hard-code all of the dependencies on the one job
 up a destination directory). They are also useful for managing
 the degree of parallelism: groups are single jobs to the main
 schedule's "maxjobs", so multiple groups can run at once with
-their own maxjob limits.
+their own maxjob limits. The first time "gname <.+>" is seen the
+name is inserted as an alias if it hasn't already been seen
+(i.e., "group" is a built-in alias). The group method is eventually
+called with the group's name as an argument to prepare and
+execute the sub-que.
 
 The unalias method returns closures blessed into the que's class
 and can be used as a general dispatch mechanism:
@@ -1915,6 +2005,25 @@ and can be used as a general dispatch mechanism:
 	my $return = $que->runjob;
 	my $return = $sub->runjob;
 	my $return = &$sub;
+
+
+Settings are used to override defaults in the schedule 
+preparation. Defaults are taken from hard-coded defaults
+in S::D, parameters passed into prepare as arguments, or
+the parent que's attributes for sub-queues or groups. 
+Settings use '%' to spearate the attribute and its value
+(mainly because '=' was already used for aliases):
+
+	verbose % 1
+	maxjob  % 1
+
+The main use of these in top-level schedules is as an 
+alternative to argument passing. In sub-queues they are
+the only way to override the que attributes. One good
+example of these is setting maxjob to 2-3 in order to
+allow multiple groups to start in the main schedule and
+then to 1 in the groups to avoid flooding the system.
+
 
 =head1 Arguments
 
@@ -1948,7 +2057,10 @@ or no dependencies:
 
 	runs_immediately :
 
-The last being unnecessary but can help document the code.
+Jobs on the righthand side of the dependency ("depends_on"
+or "dep1 dep2 dep3", above) will automatically be added to 
+the list of runnable jobs. This avoids having to add speical
+rules for them.
 
 Dependencies without a wait_for argument are an error (e.g.,
 ": foo" will croak during prepare).
@@ -1967,17 +2079,18 @@ will wait until bar has finished, unalias foo to the
 command string and pass the expanded version wholesale
 to the system command. Aliases can include fully qualified
 perl subroutines (e.g., " Foo::Bar::subname") or methods
-accessable via the $que object (e.g., "subname"), code 
+accessable via the $que object (e.g., "subname"), code
 blocks (e.g., "{returns_nonzero; 0}". If no subroutine,
 method or perl block can be extracted from the alias then
-it is passed to the "shellexec" method as a string.
+it is passed to the shell for execution via the shellexec
+method.
 
-If the schedule entry requires newlines (e.g., for 
+If the schedule entry requires newlines (e.g., for
 better display of long dependency lists) newlines
 can be embedded in it if the schedule is passed into
 prepare as an array referent:
 
-	my $sched = 
+	my $sched =
 	[
 		"foo =	bar
 				bletch
@@ -1989,14 +2102,14 @@ prepare as an array referent:
 
 	Schedule::Depend->prepare( sched => $sched ... );
 
-will handle the extra whitespace properly. Multi-line 
+will handle the extra whitespace properly. Multi-line
 dependencies, aliases or groups are not allowed if the
 schedule is passed in as a string.
 
 
 One special alias is "group". This is a standard method
-used to handle grouped jobs as a sub-que. Groups are 
-assigned using the '~' character and by having the 
+used to handle grouped jobs as a sub-que. Groups are
+assigned using the '~' character and by having the
 group name aliased to group. This guarantees that the jobs
 do not start until the group is ready and that anything
 the group depends on will not be run until all of the
@@ -2004,18 +2117,30 @@ group jobs have completd.
 
 For example:
 
-	gname = group
+	# main schedule has unlimited number of concurrent jobs.
 
-	...
-	
+	maxjob % 0
+
 	name ~ job1 job2 job3
+
+	gname : startup
+
+	# optional, default for handling groups is to alias
+	# them to the $que->group method.
+
+	gname = group
 
 	gname : startup 
 
-	shutdown : name
+	# the group runs single-file, with maxjob set to 1
+	
+	gname < maxjob % 1 >
+	gname < job1 job2 job3 >
+
+	shutdown : gname
 
 
-Will run job[123] together after "startup" completes and 
+Will run job[123] together after "startup" completes and
 will cause "shutdwon" to wait until all of them have
 finished.
 
@@ -2048,6 +2173,9 @@ schedule settings overriding the args. If no verbose
 setting is made then debug runs w/ verobse == 1,
 non-debug execution with  verbose == 0.
 
+Also "verbose % X" in the schedule, with X as the new
+verbosity.
+
 =item validate
 
 Runs the full prepare but does not fork any jobs, pidfiles
@@ -2079,16 +2207,10 @@ will be run at any one time during the que. If more jobs
 are runnable than process slots then jobs will be started
 in lexical order by their name until no slots are left.
 
-=item force, restart, noabort
+=item restart, noabort
 
-These control the execution by ignoreing existing pidfiles, 
-skipping jobs that have completed or handling failures.
-
-"force" simply ignores the status of existing pidfiles. This
-can be handy if the number of pidfiles is large or during 
-debugging. Mixing force with restart allows restarting a 
-queue even if some of the pidfiles do not have exits in them;
-missing exits are treated as nonzero exits.
+These control the execution by skipping jobs that have
+completed or depend on those that have failed.
 
 The restart option scans pidfiles for jobs which have
 a zero exit in them, these are marked for skipping on
@@ -2108,6 +2230,8 @@ restarts.
 These can be given any true value; the default for
 both is false.
 
+Also: "maxjob % X" in the schedule with X as the 
+maximum number of concurrent jobs.
 
 =item Note on schedule arguments and aliases
 
@@ -2131,6 +2255,14 @@ Hard-codding "noabort" is probably harmless.
 
 Hard-coding "debug" will effectively disable any real
 execution of the que.
+
+
+=head2 Note for debugging
+
+$que->{attrib} contains the current que settings. Its 
+contents should probably not be modified but displaying
+it (e.g., via Dumper $que->{attrib})" can be helpful in
+debgging que behavior.
 
 =back
 
@@ -2216,8 +2348,8 @@ gets run only after both abjob.ksh and another.ksh are
 done with and the validate program gets run only after all
 of the other three are done with.
 
-A job can be assigned a single alias, which must be on a 
-single line of the input schedule (or a single row in 
+A job can be assigned a single alias, which must be on a
+single line of the input schedule (or a single row in
 schedleds passed in as arrays). The alias is expanded at
 runtime to determine what gets dispatched for the job.
 
@@ -2250,7 +2382,7 @@ a-f code simply by changing the aliases, the dependencies
 remain the same.
 
 If the alias for a job is a perl subroutine call then the
-job tag is passed to it as the single argument. This 
+job tag is passed to it as the single argument. This
 simplifies the re-use above to:
 
 	file1.gz = loadfile
@@ -2304,8 +2436,8 @@ or
 
 	a = { eval{returns1}; $@ ? 1 : 0 }
 
-to reverse the return value or pass non-zero if the 
-job died. The blocks can also be used for simple 
+to reverse the return value or pass non-zero if the
+job died. The blocks can also be used for simple
 dispatch logic:
 
 	a = { $::switchvar ? subone("a") : subtwo("a") }
@@ -2321,7 +2453,7 @@ package lexicals can also be handled using a block:
 	a = { package MyPackage; somesub }
 
 Another alias is "PHONY", which is used for placeholder
-jobs. These are unaliased to sub{0} and are indended 
+jobs. These are unaliased to sub{0} and are indended
 to simplify grouping of jobs in the schedule:
 
 	waitfor = PHONY
@@ -2379,7 +2511,7 @@ double-entries for each one, for example:
 
 Even if the jobs are listed on a single line each, double
 listing is a frequent source of errors. Groups are designed
-to avoid most of this diffuculty. Jobs in a group have an 
+to avoid most of this diffuculty. Jobs in a group have an
 implicit starting and ending since they are only run within
 the group. For example if the jobs above were in a group;
 
@@ -2396,19 +2528,19 @@ This will wait until the "middle" job becomes runnble
 schedule contained in the angle-brackets. The entire
 schedule is prepared and executed after the middle job
 has forked and uses a local copy of the queued jobs
-and dependencies. This allows the "middle" group to 
+and dependencies. This allows the "middle" group to
 contain a complete schedule -- complete with sub-sub-
 schedules if necessary.
 
 The normal method for handling group names is the "group"
-method. If the group name has not already been aliased 
+method. If the group name has not already been aliased
 when the group is parsed then it will be aliased to "group".
 This allows another method to handle dispatching the jobs
 if necessary (e.g., one that uses a separate run or log
 directory).
 
-It is important to note that the schedule defined by 
-a group is run seprately from the main schedule in a 
+It is important to note that the schedule defined by
+a group is run seprately from the main schedule in a
 forked process. This localizes any changes to the que
 object and effects on jobs skipped, etc. It also means
 that the group's schedule should not have any dependencies
@@ -2470,9 +2602,9 @@ and nothing more with
 			"rb_tmu $tmufile \$RB_USER < $datapath"
 		;
 
-		# caller gets back an id string of the file 
+		# caller gets back an id string of the file
 		# (could be the command but that can get a bit
-		# long) and the closure that deals with the 
+		# long) and the closure that deals with the
 		# string itself.
 
 		( $datapath, sub { shellexec $cmd } };
@@ -2486,11 +2618,11 @@ method deals with all of the rest at runtime.
 Aside: This can be easily implemented by way of a simple
 convention and one soft link. The tmu (or sqlldr) config.
 files for each group of files can be placed in a single
-directory, along with a soft link to the #! code that 
+directory, along with a soft link to the #! code that
 performs the load. The shell code can then use '.' for
-locating new data files and "dirname $0" to locate the 
+locating new data files and "dirname $0" to locate the
 loader configuations. Given any reasonable naming convention
-for the data and loader files this allows a single executable 
+for the data and loader files this allows a single executable
 to handle mutiple data groups -- even multiple loaders --
 realtively simply.
 
@@ -2711,17 +2843,17 @@ be called with the que and job string being cleaned up after.
 =head2 unalias, runjob
 
 unalias is passed a single argument of a job tag and
-returns two items: a string used to identify the job 
+returns two items: a string used to identify the job
 and a closure that executes it. The string is used for
-all log and error messages; the closure executed via 
+all log and error messages; the closure executed via
 "&$sub" in the child process.
 
-The default runjob accepts a scalar to be executed and 
-dispatches it via "&$run". This is broken out as a 
+The default runjob accepts a scalar to be executed and
+dispatches it via "&$run". This is broken out as a
 separate method purely for overloading (e.g., for even
 later binding due to mod's in unalias).
 
-For the most part, closures should be capable of 
+For the most part, closures should be capable of
 encapsulating any logic necessary so that changes to
 this subroutine will not be necessary.
 
@@ -2876,7 +3008,7 @@ this that I can think of.
 
 =head2 group
 
-This is passed a group name via aliasing the group in 
+This is passed a group name via aliasing the group in
 a schedle, for example:
 
 	dims	= group		# alias added automatically
@@ -2887,15 +3019,15 @@ a schedle, for example:
 
 	facts : dims
 
-will call $que->group( 'dims' ) first then 
-$que->group( 'facts' ). 
+will call $que->group( 'dims' ) first then
+$que->group( 'facts' ).
 
 
 Note: Dependencies between jobs in separate groups is
 not yet supported since the group execution begins with
 a fork that leaves the sub-que with a private copy of
-the inter-job dependency tables. Once the group is 
-started if all of its jobs are not runnable then it 
+the inter-job dependency tables. Once the group is
+started if all of its jobs are not runnable then it
 will deadlock. This is currently checked in the group
 method by calling debug first:
 

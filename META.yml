@@ -1,0 +1,15 @@
+# http://module-build.sourceforge.net/META-spec.html
+#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
+name:         Schedule-Depend
+version:      0.32
+version_from: lib/Schedule/Depend.pm
+installdirs:  site
+requires:
+    Carp:                          0
+    constant:                      0
+    Data::Dumper:                  2.102
+    File::Basename:                2.6
+    strict:                        0
+
+distribution_type: module
+generated_by: ExtUtils::MakeMaker version 6.17

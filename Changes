@@ -1,21 +1,17 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
-0.31 Mon Dec  2 11:29:01 EST 2002
+0.31 Sat Jan  4 21:40:03 CST 2003
 
- -	Update documentation to show that force + restart will 
- 	consider pidfiles w/o an exit status as failed and rerun
-	them.
+ - 	Fixed noabort mode (works like "make -k"). Passing in 
+ 	abort => 0 will not set the $que->{abort} value and 
+	will thus skip only jobs which depend on the one that
+	failed.
 
- -	Better handling of errrors in restarts.
+ -	Comment cleanups.
 
- -	runjob eval's closure call, return is now the closure
-    return or $@ or 'Empty return, assuming success'. Should
-	better handle non-zero group exits.
 
- -	Minor bugfixes.
-
-0.30
+0.30 Mon Nov  4 17:11:56 CST 2002
 
  -	Schedule::Depend::subque can also handle a hash referent
  	as the schedule object.
@@ -30,11 +26,23 @@ Revision history for Perl extension Schedule::Depend
 	interfaces might get cut off if there isn't any activitiy
 	on the connection for too long.
 
- -	Minor internal bugfixes.
+ -	ttylog mode does not overwrite any existing log files
+ 	(or create new ones). This avoids creating a directory
+	full of empty logs or overwriting valid ones during 
+	a test run.
 
  -	Replaced the top-level que attributes (verbose, ttylog,
  	force, ...) with $que->{attrib}. This is the single unit
 	of inherited data for sub-queues.
+
+ -	Added $que->{user} as inherited piece of sub-queues along
+ 	with $que->{attrib}. The "user" entry is not managed in any
+	other way by by S::D can be used to store information carried
+	into sub-qeues, blessed, whatever.
+
+ -	Minor internal bugfixes.
+
+ -	Updated test.pl to handle new que syntax.
 
 0.29 Thu Sep 12 19:31:32 CDT 2002
 

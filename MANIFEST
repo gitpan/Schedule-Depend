@@ -4,3 +4,4 @@ Makefile.PL
 README
 lib/Schedule/Depend.pm
 test.pl
+META.yml                                 Module meta-data (added by MakeMaker)

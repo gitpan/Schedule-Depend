@@ -25,19 +25,16 @@
 
 package Schedule::Depend::Execute;
 
-our $VERSION=0.40;
+our $VERSION=0.90;
 
 use strict;
 use warnings;
 
-use FindBin qw( $Bin );
 use FindBin::libs;
 
 use Carp;
 use Cwd qw( &abs_path );
 use File::Basename qw( &dirname );
-
-use Cwd qw( &abs_path );
 
 use Getopt::Long;
 use Pod::Usage;
@@ -93,6 +90,8 @@ qw(
 	verbose+
 	debug+
 
+	prefix=s
+
 	restart!
 	force!
 	abort!
@@ -128,68 +127,72 @@ sub runsched
 
 	my $caller = caller;
 
+	# deal with any command line options.
+	# pod2usage dumps out a summary or verbose
+	# usage message if getopt fails or the 
+	# "help" option is used.
+
+	unless( GetOptions($cmdline, @optionz) )
+	{
+		pod2usage "$0: invalid command line argument"
+	}
+	elsif( $cmdline->{help} )
+	{
+		$cmdline->{verbose} ||= 1;
+
+		pod2usage
+			'-verbose' => $cmdline->{verbose},
+			'-exitval' =>  1,
+			$0
+	}
+
+	%Schedule::Depend::Execute::defaults
+		or die "Bogus gensched: %Schedule::Depend::Execute::defaults is false";
+
+	my $defaults = \%Schedule::Depend::Execute::defaults;
+
+	# won't get far without this...
+
+	$cmdline->{sched} = shift || $defaults->{sched}
+		or die "Bogus gensched: no schedule";
+
+	# scratch areas used for S::D are under the 
+	# Bin dir's sibling "var" directory. these
+	# inclue $Bin/var/[tmp|run|log].
+
+	my $prefix =
+		$cmdline->{prefix} ||= abs_path "$FindBin::Bin/../var";
+
+	@{$cmdline}{ qw(prefix tmpdir rundir logdir) } =
+	(
+		$prefix,
+
+		$prefix . '/tmp',
+		$prefix . '/run',
+		$prefix . '/log',
+	);
+
+	checkdir @{$cmdline}{qw( prefix rundir logdir tmpdir )};
+
+	# set defaults for cmdline values.
+	#
+	# if these are not in @optionz then they will 
+	# always be set.
+
+	default $_, 1 for qw( abort maxjob verbose );
+
+	# the defaults for configuring by caller are either
+	# the first part of the caller's pacakge space or 
+	# a value specified in defaults as the "global_key".
+
+	my $global =
+		$defaults->{global_key} || ( split /::/, $caller )[0];
+
+	log_message "Global key: $global ($caller)";
+
 	my $result = 
 	eval
 	{
-		my $defaults = \%Schedule::Depend::Execute::defaults
-			or die "Bogus gensched: %Schedule::Depend::Execute::defaults is false";
-
-		my $sched = shift || $defaults->{sched}
-			or die "Bogus gensched: no schedule";
-
-		my $global =
-			$defaults->{global_key} || ( split /::/, $caller )[0];
-
-		$defaults->{global_key} ||= $global;
-
-		log_message "Global key: $global ($caller)";
-
-		# deal with any command line options.
-		# pod2usage dumps out a summary or verbose
-		# usage message if getopt fails or the 
-		# "help" option is used.
-
-		unless( GetOptions($cmdline, @optionz) )
-		{
-			pod2usage "$0: invalid command line argument"
-		}
-		elsif( $cmdline->{help} )
-		{
-			$cmdline->{verbose} ||= 1;
-
-			pod2usage
-				'-verbose' => $cmdline->{verbose},
-				'-exitval' =>  1,
-				$0
-		}
-
-		# scratch areas used for S::D are under the 
-		# Bin dir's sibling "var" directory.
-
-		my $prefix = abs_path "$Bin/../var";
-
-		@{$cmdline}{ qw(prefix tmpdir rundir logdir) } =
-		(
-			$prefix,
-
-			$prefix . '/tmp',
-			$prefix . '/run',
-			$prefix . '/log',
-		);
-
-		checkdir @{$cmdline}{qw( prefix rundir logdir tmpdir )};
-
-		# won't get far without this...
-
-		$cmdline->{sched} = $sched;
-
-		# set defaults for cmdline values.
-		#
-		# if these are not in @optionz then they will 
-		# always be set.
-
-		default $_, 1 for qw( abort maxjob verbose );
-
 		# merge the command line settings into the default's 
 		# global section.
 
@@ -262,7 +265,7 @@ sub runsched
 
 	if( $result + 0 )
 	{
-		die "$$: Execution Failed: $result";
+		die "$$: Execution Exited with: $result";
 	}
 	elsif( $@ )
 	{
@@ -368,13 +371,26 @@ to allow the methods to be called from a schedule.
 Separate projects will normally require their own Project::Execute
 to tie the pieces of that project together.
 
+=head1 KNOWN BUGS
+
+None, yet.
+
+=head1 2DO
+
+These might be re-written as que methods to clean up
+issues accessing the defaults hash.
 
 =head1 AUTHOR
 
 Steven Lembark, Workhorse Computing 
 <lembark@wrkhors.com>
 
-=head1 COPYRIGHT
+=head1 Copyright
 
-This code is made available under the same terms as
-Perl-5.6.1 or any later verison of Perl.
+(C) 2001-2002 Steven Lembark, Workhorse Computing
+
+This code is released under the same terms as Perl istelf. Please
+see the Perl-5.8 distribution (or later) for a full description.
+
+In any case, this code is release as-is, with no implied warranty
+of fitness for a particular purpose or warranty of merchantability.

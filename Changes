@@ -1,15 +1,10 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+2.00 Sun Dec 26 06:34:50 EST 2004
 
-1.2 Fri Jun 11 15:26:54 EDT 2004
-
-- Fix bug in S::D::Exec and S::D::Util for handling
-  the key used for global settings. If a value is
-  provded for "global_key" then it will be used as
-  the key for global defaults; lacking that the 
-  caller of runsched's package will be used for the
-  global defaults.
+- Added doc's for Execute, Utilities, and Config
+  modules. Updated comments in all of the modules.
 
 1.00 Fri Apr  9 01:28:58 CDT 2004
 
@@ -18,9 +13,7 @@ Revision history for Perl extension Schedule::Depend
   methods for schedules. Execute exports "runsched"
   to handle running or debugging the schedules. The
   user supplies one more module to define a defaults
-  hash and the #! code can be 4 lines. Minor changes
-  to the S::D module were required, mainly cleanus
-  in the group code.
+  hash and the #! code can be 4 lines.
 
 - Utilities includes logging, nastygrams, progress
   mail, directory sanity checks, local path generation.
@@ -34,8 +27,7 @@ Revision history for Perl extension Schedule::Depend
   point.
 
 - 2do: The added modules need more POD and tests in
-  test.pl. Handling of attributes overridden in groups
-  needs improvement.
+  test.pl. 
 
 
 0.33 Mon Mar 15 23:07:33 CST 2004

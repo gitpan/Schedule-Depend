@@ -7,40 +7,35 @@ WriteMakefile
 (
 	NAME	=> "Schedule::Depend",
 
-    VERSION	=> '1.3',
+    VERSION	=> '2.0',
 
-	(
-		$] ge '5.006001' ? 
-		(
-			ABSTRACT	=>
+	ABSTRACT	=>
 'Parallel process startup with dependencies and restart.
 Execute, Config, Utilities modules simplify generating
 #! code for running queues.',
 
-			AUTHOR     	=> 'Steven Lembark <lembark@wrkhors.com>',
-			PREREQ_PM	=> 
-			{
-				# unlikely these aren't avaialble, but can't 
-				# hurt to check...
+	AUTHOR     	=> 'Steven Lembark <lembark@wrkhors.com>',
+	PREREQ_PM	=> 
+	{
+		# unlikely these aren't avaialble, but can't 
+		# hurt to check... Symbol is core as of 5.8.
 
-				Carp			=> 0,
-				constant		=> 0,
-				strict			=> 0,
+		Carp			=> 0,
+		constant		=> 0,
+		strict			=> 0,
+		Symbol			=> 0,
 
-				Data::Dumper	=> 2.102,
-				File::Basename	=> 2.6,
+		Data::Dumper	=> 2.102,
+		File::Basename	=> 2.6,
 
-				FindBin			=> 1.44,
+		FindBin			=> 1.44,
 
-				# these may have to be installed,
-				# used in S::D::Execute
+		# these may have to be installed,
+		# used in S::D::Execute
 
-				FindBin::libs	=> 1.0,
-				Cwd				=> 2.12,
-			},
-		)
-		: ()
-	),
+		FindBin::libs	=> 1.0,
+		Cwd				=> 2.12,
+	},
 
 	dist =>
 	{

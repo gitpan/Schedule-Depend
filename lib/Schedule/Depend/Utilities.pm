@@ -12,7 +12,7 @@ package Schedule::Depend::Utilities;
 use strict;
 use warnings;
 
-our $VERSION=0.50;
+our $VERSION=0.90;
 
 use Carp;
 
@@ -20,9 +20,13 @@ use File::Basename;
 
 use FindBin qw( $Bin );
 
+
+
 # set the dumper default formats.
+# anyone who doesn't like these can use local.
 
 use Data::Dumper;
+
 	$Data::Dumper::Purity           = 1;
 	$Data::Dumper::Terse            = 1;
 	$Data::Dumper::Indent           = 1;
@@ -62,15 +66,17 @@ sub import
 	# stuff the subroutine names into the callers 
 	# package space.
 	#
-	# the caller gets these defined whether they 
-	# like it or not...
+	# qualify_to_ref is defined in Symbol (stock with 5.8)
+	# and avoids using no strict to export the symbols.
 
 	my $caller = caller;
 
-	no strict 'refs';
+	for( @EXPORT )
+	{
+		my $glob = qualify_to_ref $_, $caller;
 
-	*{ $caller . '::' . $_ } = __PACKAGE__->can( $_ )
-		for @EXPORT;
+		*$glob = __PACKAGE__->can( $_ );
+	}
 }
 
 ########################################################################
@@ -95,6 +101,13 @@ our $defaultz = \%Schedule::Depend::Execute::defaults;
 	my $msgseq = 0;
 
 	my $tz = $ENV{TZ} || '';
+
+	sub log_format
+	{
+		my $msg = join "\n", map { ref $_ ? Dumper $_ : $_ } ( @_, '' );
+
+		join ' ', "\n$$", ++$msgseq, scalar localtime, $msg;
+	}	
 
 	sub log_message
 	{
@@ -128,13 +141,6 @@ our $defaultz = \%Schedule::Depend::Execute::defaults;
 
 		-1
 	}	
-
-	sub log_format
-	{
-		my $msg = join "\n", map { ref $_ ? Dumper $_ : $_ } ( @_, '' );
-
-		join ' ', "\n$$", ++$msgseq, scalar localtime, $msg;
-	}	
 }
 
 ########################################################################
@@ -153,9 +159,9 @@ sub send_mail
 
 	unless( $mailargz{To} )
 	{
-		$mailargz{To} = 'root@localhost';
+		$mailargz{To} = (getpwuid $>)[0] . '@localhost'
 
-		log_error 'Bogus send_mail: defaulting email to root@localhost';
+		log_error "Bogus send_mail: defaulting email to '$mailargz{To}'";
 	}
 
 	$mailargz{To} = join ',', @{ $mailargz{To} }
@@ -163,15 +169,20 @@ sub send_mail
 
 	# other things can reasonably be defaulted...
 
-	my $From = (getpwuid $>)[0] . q{@Schedule::Depend.com};
-
 	$mailargz{'X-Schedule::Depend'} ||= "Generic";
 
-	$mailargz{From} ||= $From;
+	$mailargz{From} ||= 
+	do
+	{
+		my $user = (getpwuid $>)[0];
+		chomp ( my $host = qx(hostname) );
+
+		join '@', $user, $host
+	};
 
 	$mailargz{'Reply-to'} ||= $mailargz{From};
 
-	$mailargz{Subject} ||= 'Empty Subject';
+	$mailargz{Subject} ||= "Email from $mailargz{From}";
 
 	$mailargz{Subject} =~ s/^/[Unknown-Notify]/
 		unless $mailargz{Subject} =~ /^\[/;
@@ -211,7 +222,7 @@ sub progress_mail
 	my $config 	= $que->{user}->moduleconfig
 		or die "$$: Bogus notify: que missing user data.";
 
-	my $quename = $config->{quename};
+ 	my $quename = $config->{quename} || 'Unknown';
 
 	my $names = $config->{notify}{$job}
 		or die "$$: Bogus notify: no '$job' name list configured.";
@@ -261,7 +272,7 @@ sub nastygram
 	# without a que object, use the global defaults
 	# to find things instead.
 
-	$global ||= $defaultz->{global_key};
+	$global ||= $defaultz->{global};
 
 	my $config = $defaultz->{$global}
 		or warn "Bogus config: missing global 'Schedule::Depend' entry";
@@ -283,9 +294,9 @@ sub nastygram
 	{
 		'X-Schedule::Depend'	=> $fatal,
 
-		To   		=> $notify->{fatal} || 'root@localhost',
+		To   		=> $notify->{fatal} || 'schedule_depend@localhost',
 
-		From		=> $config->{mail_from} || 'root@localhost',
+		From		=> $config->{mail_from} || 'schedule_depend@localhost',
 
 		Subject 	=> $subject,
 
@@ -319,7 +330,7 @@ sub localpath
 
 	$global ||= $defaultz->{global_key};
 
-	$basenames ||= $defaultz->{$global}{base};
+	$basenames ||= $defaultz->{$global}{basename};
 
 	# make a local copy of the last argument; replace
 	# symbolic names from the defaults with real 
@@ -415,7 +426,7 @@ sub slurp
 	# are both true).
 
 	my $result = eval $item
-		or nastygram "Failed eval during slurp", $item;
+		or nastygram "Failed eval during slurp", $path;
 }
 
 ########################################################################
@@ -435,142 +446,216 @@ Kitchen-sink module for configuratin, logging, whatever...
 
 	use Schedule::Depend::Utilities;
 
-	# send email notification
-
-	notify $message, @mailto;
-
 	# generate path relative to the #!'s $Bin directory.
 	# these can be abs-pathed without regard to the 
-	# current working directory.
+	# current working directory. The last path element 
+	# is looked up in $defaulz->{global}{basename} allowing
+	# for simpler shared path names.
 
-	localpath @path_components
+	my $path = localpath @path_components, $token;
+	my $path = localpath @path_components, 'basename';
 
 	# sanity check a set of paths.
 
 	checkdir @dirlist;
 
-	# override values from the Defaults module at run time. 
+	# send email, to can also be an array referent.
+	# from defaults to current user at whatever
+	# 'hostname' returns.
 
-	my $new_config = $config->configure %overrides;
+	send_mail
+		To         => 'someone@someplace',
+		From       => 'me@here',
+		Subject    => 'Message subject',
+		Data       => 'Message body',
 
-	# return a flattend out defaults hash with the global
-	# values overridden by module-specific settings. this
-	# allows methods to access the values with a single key.
+		'X-Schedule::Depend' => 'Progress'
+	;
 
-	sub called_from_schedule_depend
+	# defaults from $que->{user}->moduleconfig.
+		
+	progress_mail @message;
+
+	nastygram @message;
+
+	
+
+=head1 DESCRIPTION
+
+Utility functions for queueing: message logging with standard
+format, sending email, and generating/checking local file paths.
+
+=over 4
+
+=item Messages: log_format, log_message, log_error
+
+The format adds a PID and timestamp, converts referents via
+Data::Dumper, and returns the result as a string.
+
+log_mesasge prints to STDOUT and returns clean (0), 
+log_error prints to STDERR and STDOUT, returning an 
+error status of -1.
+
+=item Email-notification: send_mail, progress_mail, nastygram.
+
+send_mail is a generic mail wrapper for MIME::Lite;
+progress mail is useful for tracking long-running jobs
+(basically log_message via email); nastygram will send
+the email and then die with the error message (effectively
+aborting a queue).
+
+progress_mail and nastygram are que methods and take
+their to and from values via $que->{user}->{moduleconfig}.
+
+Progress mail is intended for monitorig long-running
+jobs and sends messages to $config->{notify}{$job}:
+
+	$defaults = 
 	{
-		my $que = shift;
+		Foobar =>
+		{
+			queuename => 'Daily Frobnicate',
 
-		my $config = $que->{user}->moduleconfig;
-
-		my $value = $config->{key};
+			notify =>
+			{
+				download_stuff =>
+				[ qw( user1@somehost user2@anotherhost ) ],
+			},
+		},
 
 		...
 	}
 
+	...
 
-=head1 NOTES
-
-notify depends a working sendmail config for the given system.
-
-The purpose of moduleconfig is to simplify access to module-speific
-data and allow it to easly override the global values.
-
-Given a defaults hash with:
-
+	sub que_job
 	{
-		Schedule::Depend =>
-		{
-			verbose => 0,
-		},
+		...
 
-		Download =>
-		{
-			httphost => 'there.com',
-			httppath => '/pub/here',
-
-			verbose => 1,
-		},
-
-		Execute =>
-		{
-			debug => 1,
-			force => 1,
-		}
-
-	} 
-
-moduleconfig called within Schedule::Depend::Download returns a
-hash with:
-
-	{
-		verbose => 1,
-
-		httphost => 'there.com',
-		httppath => '/pub/here',
+		$que->progress_mail 'download_foobar';
 	}
 
-This allows code to access $config->{key} without having to
-check for $config->{Download}{$key} || $config->{$global}{$key}
-for every value: the merged hashes handle this in one step.
+Will send a standard message with a subject of
+"[$quename-Progress] $jobname" to the names configured 
+for that job.
 
-If called within Schedule::Depend::Execute the defaults hash above 
-returns:
+nastygram notifies the configured list of a fatal run-time
+error that is aborting queue execution. It sends out a 
+log_format-ed message and then dies with an error message.
 
+	$defaultz =
 	{
-		verbose => 0,
-		debug => 1,
-		force => 1
-	}
+		Foobar => 
+		{
+			notify =>
+			{
+				job1 => 'user1@someplace',
+				job2 => 'user2@someplace',
 
-Moving code between modules will have them automatically
-getting back the correct defaults for that module.
+				fatal => [qw( user1@someplace user2@someplace )],
+			},
+		},
+	},
 
-Most methods of a que object called from the schedule
-will begin something like:
 
-	sub download
+	$que->nastygram 'Fatal: unable to carry the load', $loadref;
+
+
+nastygram will call log_format on the arguments, prefix a
+fatality message, and send the result to everyone listed in
+the fatal list. 
+ 
+
+=item Local files: localpath, checkdir, slurp.
+
+localpath uses $config->{basename} to convert a path plus
+basename-or-token to a path relative to $FindBin::Bin. Its
+main use is in tokenizing the basenames of paths used in 
+multiple stages of a job. The code uses hash keys for the
+paths which can then be more descriptive and changed in 
+standard places.
+
+	$defaultz =>
 	{
-		my $que		= shift
-			or croak "Bogus download: missing que object";
+		Foboar =>
+		{
+			basenames =>
+			{
+				name2node => 'name-node-table.dump.gz',
+			}
+		},
+	};
 
-		@_ or croak "Bogus download: missing download basename";
+	...
 
-		$DB::single = 1 if $que->debug;
+	my $path = localpath '../var/tmp', 'name2node';
 
-		my $config 	= $que->{user}->moduleconfig
-			or die "$$: Bogus download: que missing user data.";
+This is a subroutine and not a que method, it accesses
+$Schedule::Depend::Execute::defaults->{global} directly
+to find the hash of basename-tokens.
+
+It is also specific to *NIX, since it uses a join '/'
+to generate the final path.
+
+If the input path does not begin with '/' then $FindBin::Bin
+is prefixed to it. Note that this path may not yet exist
+where localpath is called to generate a path for new output.
+In those casese it will carp but still return the requested
+path.
+
+checkdir is used to santiy-check the log, run, and tmp
+directories before execution. If the path(s) requested do
+not exist then it attempts to create them with mods of 
+02775. If the directory does not exist or is not
+read+executable+writable by the current user it dies with
+a specific error message.
+
+	checkir $indir, $outdir, $tmpdir;
+
+	# if you are alive at this point then the directories
+	# exist and are fully accessable.
+
+slurp reads the output of Data::Dumper and evals it, returning
+the result:
+
+	$defaultz =>
+	{
+		Foobar =>
+		{
+			basename =>
+			{
+				name2id => '../var/tmp/entry2id.dump',
+			},
+		},
+	};
+
+	my $data = slurp localpath name2id;
 
 
-This allows the parse to be used as an alias to handle multiple
-cases in the schedule, for example:
+Will reload and eval the output of Data::Dumper (or 
+anything else that can be eval-ed), returning the 
+result as a scalar (i.e., the eval is assigned to 
+a scalar).
 
-	CleanEx.dat = download
-
-	Foo.bar = download
-
-Will eventually call $que->download( 'CleanEx.dat' ) and
-$que->download( 'Foo.bar' ). Default configuration data
-is held in the que's user area, blessed into the Shared
-package so that moduleconfig is available from it -- this is
-handled automatically by runsched (in Execute.pm). 
-
-=head1 See Also
-
-=over 4
-
-=item Schedule::Depend
-
-General schdule syntax.
-
-=item Perl Documentation
-
-perl(1) perlreftut(1)
+If the eval failes slurp calls nastygram with a message
+of the failed path.
 
 =back
 
 =head1 AUTHOR
 
-Steven Lembark, Workhorse Computing 
-<lembark@wrkhors.com>
+Steven Lembark, Workhorse Computing <lembark@wrkhors.com>
 
+=head1 See Also
+
+Schedule::Depend Schedule::Depend::Execute Schedule::Depend::Config
+
+=head1 Copyright
+
+(C) 2001-2002 Steven Lembark, Workhorse Computing
+
+This code is released under the same terms as Perl istelf. Please
+see the Perl-5.8 distribution (or later) for a full description.
+
+In any case, this code is release as-is, with no implied warranty
+of fitness for a particular purpose or warranty of merchantability.

@@ -123,32 +123,15 @@ my %defaultz =
 ########################################################################
 
 ########################################################################
-# examine the state of the que
-########################################################################
-
-# $que evalues to true if there is anything left to be run,
-# e.g.,: while( $que ) {...}
-
-#use overload q{bool} =>
-#sub
-#{
-#	print STDOUT "boolean testing " . ref $_[0] . "\n";
-#	ref $_[0] ? scalar %{ $_[0]->{queued} } : $_[0]
-#};
-
-# jobs that are ready to be run, these are any job for
-# which keys %{ $que->{queued}{$job} } is false.
+# queue management: check the state, take jobs off the que, check
+# what jobs depend on the current one, handle job completion when
+# the tasks finish.
 #
-# the sort delivers jobs in lexical order -- makes
-# debugging a bit easier and allows higher-priroty
-# jobs to get run sooner if axjobs is set. derived
-# classes might update the sort to deliver jobs with
-# more waiting jobs or which were available soonest.
-#
-# this might also base the runnable jobs on some
-# measure of system load, etc. catch there is that
-# a lack of both running and runnable jobs will
-# lead to an abort due to a deadlocked que.
+# note that dequeue and complete are NOT the same action: jobs must
+# be removed from the queue before they are forked since the queue
+# will be examined multiple times while the job is running.
+
+sub queued { sort keys %{ $_[0]->{queued} } }
 
 sub ready
 {
@@ -156,17 +139,6 @@ sub ready
 
 	sort grep { ! keys %{ $queued->{$_} } }  keys %$queued
 }
-
-# list of all jobs queued.
-
-sub queued { sort keys %{ $_[0]->{queued} } }
-
-########################################################################
-# handle specific jobs
-########################################################################
-
-# syntatic sugar.
-# mainly here as an example of what the que entry does.
 
 sub depend
 {
@@ -176,10 +148,22 @@ sub depend
 	sort keys %{ $que->{depend}{$job} };
 }
 
+########################################################################
 # take a job out of the queue. this is not the same as
 # listing it as complete: jobs must be removed from the
 # queue immediately when they are forked since the que
 # may be examined many times while the job is running.
+#
+# dequeing the job simply removes the job's name from
+# the queued hash.
+#
+# job completion involves:
+#
+#	remove this job from the list of depend list of jobs
+#	that depend on it.
+#
+#	if there is a cleanup method defined for the $que
+# 	then call it for the job.
 
 sub dequeue
 {
@@ -188,14 +172,6 @@ sub dequeue
 
 	delete $que->{queued}{$job};
 }
-
-# handle job completion:
-#
-#	remove this job from the list of depend list of jobs
-#	that depend on it.
-#
-#	if there is a cleanup method defined for the $que
-# 	then call it for the job.
 
 sub complete
 {
@@ -219,9 +195,78 @@ sub complete
 	}
 }
 
-# called prior to job execution in all modes to determine if the
-# job seems runnable. test for existing pidfiles w/o exit status,
-# etc.
+########################################################################
+# few bits of information, saves extra hard-coding of structure info.
+# these are mainly useful for generating sub-queues with the config
+# values intact.
+########################################################################
+
+# make a shallow copy of the attributes.
+# everything hard-coded here is at a single level anyway.
+
+sub status
+{
+	my $que = shift;
+
+	my %attrib = %{ $que->{attrib} };
+
+	wantarray ? %attrib : \%attrib
+}
+
+# note that the %{...} mess avoids external code
+# mucking around with the values -- none of the alias
+# entries are references themselves.
+
+sub alias
+{
+	my $que = shift;
+
+	if( @_ )
+	{
+		# hand back a sliced-up hash...
+
+		my %return = ();
+
+		@return{@_} = @{ $que->{alias} }{@_}
+
+		%return;
+	}
+	else
+	{
+		# ... or the whole thing.
+
+		%{ $que->{alias} }
+	}
+}
+
+# arguments & config info
+
+sub restart	{ $_[0]->{attrib}{restart}	}
+sub force	{ $_[0]->{attrib}{force} 	}
+sub noabort	{ $_[0]->{attrib}{abort}	}
+
+sub verbose	{ $_[0]->{attrib}{verbose}	}
+sub debug	{ $_[0]->{attrib}{debug}	}
+sub nofork	{ $_[0]->{attrib}{nofork} 	}
+
+sub rundir	{ $_[0]->{attrib}{rundir} }
+sub logdir	{ $_[0]->{attrib}{logdir} }
+
+# runtime status; these should probably not
+# be modified, but there may be a reason so
+# the references are returned.
+
+sub jobz	{ $_[0]->{jobz} 	}
+sub pidz	{ $_[0]->{pidz} 	}
+
+sub failure	{ $_[0]->{failure} || '' }
+*errstr = \&failure;
+
+
+########################################################################
+# pre-check a queue to ensure that it does not deadlock and that all
+# of the jobs are runnable. this includes creating .out, .err, and 
+# .pid files and sanity checking existing pidfile status.
 #
 # this can be overloaded on various O/S to use /proc/blah to
 # get more detailed in its checks. default is to croak on a
@@ -437,6 +482,26 @@ sub precheck
 # these are general fodder for overloading.
 ########################################################################
 
+########################################################################
+# execute the job after the process has forked.
+# overloading this is heavily tied to changes
+# in unalias.
+#
+# this may be called as a sub or method, in any
+# case the closure will be the last argument.
+#
+# returning the exit status here makes avoiding
+# phorkatosis simpler since the caller can manage
+# the exit in one place, and ensures that the exit
+# status gets written to the pidfile even if the
+# parent process dies while this is running.
+#
+# the caller gets back whatever the code
+# reference returns.
+
+sub runjob { $_[-1]->() }
+
+########################################################################
 # the result here gets passed to runjob for
 # execution. idea here is to hand off whatever
 # seems most useful to run.
@@ -573,12 +638,13 @@ sub unalias
 	bless $sub, ref $que || $que
 }
 
-# call. putting this into its own method allows better
-# reporting and saves the caller from having to figure
-# out what a shell vs. subroutine return means: returning
-# non-zero to the dispatcher which will report the job as
-# failed. Since this checks both the return value of system
-# and $? it will catch whatever can be handled automatically.
+########################################################################
+# putting this into its own method allows better reporting
+# and saves the caller from having to figure out what
+# a shell vs. subroutine return means: returning non-zero
+# to the dispatcher which will report the job as failed.
+# Since this checks both the return value of system and
+# $? it will catch whatever can be handled automatically.
 
 sub shellexec
 {
@@ -626,91 +692,6 @@ sub shellexec
 		0
 	}
 }
-
-# execute the job after the process has forked.
-# overloading this is heavily tied to changes
-# in unalias.
-#
-# this may be called as a sub or method, in any
-# case the closure will be the last argument.
-#
-# returning the exit status here makes avoiding
-# phorkatosis simpler since the caller can manage
-# the exit in one place, and ensures that the exit
-# status gets written to the pidfile even if the
-# parent process dies while this is running.
-#
-# the caller gets back whatever the code
-# reference returns.
-
-sub runjob { $_[-1]->() }
-
-########################################################################
-# few bits of information, saves extra hard-coding of structure info.
-# these are mainly useful for generating sub-queues with the config
-# values intact.
-########################################################################
-
-# make a shallow copy of the attributes.
-# everything hard-coded here is at a single level anyway.
-
-sub status
-{
-	my $que = shift;
-
-	my %attrib = %{ $que->{attrib} };
-
-	wantarray ? %attrib : \%attrib
-}
-
-# note that the %{...} mess avoids external code
-# mucking around with the values -- none of the alias
-# entries are references themselves.
-
-sub alias
-{
-	my $que = shift;
-
-	if( @_ )
-	{
-		# hand back a sliced-up hash...
-
-		my %return = ();
-
-		@return{@_} = @{ $que->{alias} }{@_}
-
-		%return;
-	}
-	else
-	{
-		# ... or the whole thing.
-
-		%{ $que->{alias} }
-	}
-}
-
-# arguments & config info
-
-sub restart	{ $_[0]->{attrib}{restart}	}
-sub force	{ $_[0]->{attrib}{force} 	}
-sub noabort	{ $_[0]->{attrib}{abort}	}
-
-sub verbose	{ $_[0]->{attrib}{verbose}	}
-sub debug	{ $_[0]->{attrib}{debug}	}
-sub nofork	{ $_[0]->{attrib}{nofork} 	}
-
-sub rundir	{ $_[0]->{attrib}{rundir} }
-sub logdir	{ $_[0]->{attrib}{logdir} }
-
-# runtime status; these should probably not
-# be modified, but there may be a reason so
-# the references are returned.
-
-sub jobz	{ $_[0]->{jobz} 	}
-sub pidz	{ $_[0]->{pidz} 	}
-
-sub failure	{ $_[0]->{failure} || '' }
-*errstr = \&failure;
 
 ########################################################################
 # deal with groups & sub-queues.
@@ -3108,7 +3089,7 @@ lembark@wrkhors.com
 (C) 2001-2002 Steven Lembark, Workhorse Computing
 
 This code is released under the same terms as Perl istelf. Please
-see the Perl-5.6.1 distribution (or later) for a full description.
+see the Perl-5.8 distribution (or later) for a full description.
 
 In any case, this code is release as-is, with no implied warranty
 of fitness for a particular purpose or warranty of merchantability.

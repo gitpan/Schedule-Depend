@@ -1,30 +1,40 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
-0.20 Mon Apr 29 13:24:20 CDT 2002
+0.22 Sat May  4 13:43:47 CDT 2002
 
- -	Remove depdency on Text::Balanced until I can make
- 	the logic work; regexen work nicely for now.
+ -	PHONY jobs don't pre-check pidfiles.
 
- -	Removed option for null alias ("foo ="), leaving 
- 	PHONY as a placeholder. This leaves the schedules
-	a bit more obvious and less prone to dropout errors.
+ -	Zero-size pidfiles are assumed non-running in restart mode,
+ 	this saves having to blow off the unused pidfiles after a
+	que is aborted via ^C.
 
- -	POD and comment updates. POD is still behind development
- 	but less so.
+ -	Few minor '==' code bugs.
 
- -	Basic interface for prepare/execute seems stable. A few 
- 	more methods may be broken out but the top-level calls
-	should remian stable.
+ -	^C handling via $SIG{INT} handler setting $que->{abort}. 
 
- -	test.pl needs to be updated with more complete tests for
- 	handling of perl blocks, restart and noabort.
+ - 	TERM handler forwards a SIGTERM to the process group; forked
+ 	process sets $SIG{TERM} = 'DEFAULT'; if the child process
+	needs any speical SIGTERM handling it will install that for
+	itself on startup.
 
- -	Added a generic README.
+ -	Turned off warnings during the + 0 check in the child 
+ 	process to avoid logging warnings about non-numeric 
+	values.
+
+ -	test.pl is in serious need of updates to check all of
+ 	this properly. 
+
+
+0.21 
+
+ -	Minor code, comment cleanups.
+
+ -	Remove Depndency on Text::Balanced.
 
 0.19 Sat Apr 20 22:27:38 CDT 2002
 
- -	At this point the main interface isn't likely to change.
+ -	At this point the interface isn't going to change.
 
  -	Clean up unalias a bit, pushed lexicals into the
 	if-ladder.

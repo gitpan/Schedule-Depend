@@ -6,6 +6,8 @@
 
 package Schedule::Depend;
 
+our $VERSION = 0.17;
+
 use strict;
 
 # make messages output during the use phase prettier.
@@ -44,8 +46,6 @@ use Data::Dumper;
 ########################################################################
 # package variables
 ########################################################################
-
-our $VERSION = 0.16;
 
 # hard-coded defaults used in the constructor (prepare). 
 # these can be overridden in the config file via aliases,
@@ -371,6 +371,7 @@ sub precheck
 			# keep going.
 
 			print "$$: Completed: $job" if $verbose;
+			print "$$: Previous status:", @linz if $debug;
 
 			if( $que->{restart} )
 			{
@@ -385,10 +386,10 @@ sub precheck
 
 				my( $pid, $cmd, $exit ) = @linz[0,1,-1];
 
-				if( $exit = 0 )
+				if( $exit == 0 )
 				{
 					# no reason to re-run this job.
-					# note: this is always reprinted.
+					# note: this is always printed.
 					
 					print "$$: Marking job for skip on restart: $job";
 

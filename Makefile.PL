@@ -1,11 +1,14 @@
 use ExtUtils::MakeMaker;
+
 # See lib/ExtUtils/MakeMaker.pm for details of how to influence
 # the contents of the Makefile that is written.
 
 WriteMakefile
 (
-	NAME => "Schedule::Depend",
-    'VERSION_FROM'	=> 'Depend.pm',
+	NAME	=> "Schedule::Depend",
+
+    VERSION_FROM	=> 'lib/Schedule/Depend.pm',
+
 	(
 		$] ge '5.006001' ? 
 		(
@@ -27,6 +30,11 @@ WriteMakefile
 		)
 		: ()
 	),
-	'dist' => {COMPRESS=>'gzip',SUFFIX=>'gz'}
+
+	dist =>
+	{
+		COMPRESS	=> 'gzip',
+		SUFFIX		=> 'gz'
+	}
 );
 

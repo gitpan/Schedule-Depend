@@ -7,7 +7,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.26;
+our $VERSION = 0.28;
 
 use strict;
 

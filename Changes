@@ -1,6 +1,13 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+0.27 Tue Sep 10 14:32:58 CDT 2002
+
+ -	Doc, comment cleanups.
+
+ -	Cleaned up the distribution package a bit (Depend.pm 
+ 	now lives in lib/Schedule).
+
 0.26 Thu Jun  6 09:06:45 CDT 2002
 
  - 	debug argument avoids calling unalias, simply checks

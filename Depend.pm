@@ -6,7 +6,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.17;
+our $VERSION = 0.18;
 
 use strict;
 
@@ -371,7 +371,7 @@ sub precheck
 			# keep going.
 
 			print "$$: Completed: $job" if $verbose;
-			print "$$: Previous status:", @linz if $debug;
+			print "$$: Previous status:", @linz if $que->{debug};
 
 			if( $que->{restart} )
 			{

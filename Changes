@@ -1,17 +1,35 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
-0.11
+0.12 Fri Apr 12 14:05:41 CDT 2002
+
+ -	Added handling for sub's named with packages for
+ 	the calls. e.g., "Foo::Bar::bletch : frobnicate"
+	will call the subroutine in that package if it 
+	exists. This requirs some change in the parser
+	since it now has to detect colons that aren't 
+	followed by colons to perform the split (not 
+	difficult).
+
+	At this point unalias can automatically detect
+	methods, local subs and subs w/ package names
+	before dispatching to the shell.
+
+	Order of lookups is also changed, from Package::Sub
+	through method to sub.
+
+
+0.11 Fri Apr 12 03:46:48 CDT 2002
 
  - 	Stamped out some doc bugs. Mainly that the 
- 	required argument is "sched" not "depend".
-
- -	
+ 	required argument is "sched" not "depend",
+	empty aliases are no longer errors and 
+	bogus pod.
 
 0.10 Thu Apr 11 14:16:40 CDT 2002
 
- -	Update unlias to search for $que->can( $job ) or 
-	__PACKAGE__ . '::job', using closures to call
+ -	Update unlias to search for $que->can( $run ) or 
+	__PACKAGE__->can($run)', using closures to call
 	the method/sub with the aliased string as an
 	argument. This allows scheduling of methods or
 	subs by name without any modification to the 

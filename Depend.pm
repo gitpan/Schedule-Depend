@@ -43,7 +43,7 @@ use Data::Dumper;
 # package variables
 ########################################################################
 
-our $VERSION = 0.11;
+our $VERSION = 0.14;
 
 # hard-coded defaults used in the constructor (prepare). 
 # these can be overridden in the config file via aliases,
@@ -173,15 +173,28 @@ sub unalias
 
 	my $run = $que->{alias}{$job} || $job;
 
-	# now check for method/sub calls that match
-	# the alias. if one exists then call it with
-	# the original job tag as an argument.
+	# the job may be a fully qualified subroutine
+	# with a package name (e.g., Foo::Bar::bletch).
+	# breaking this down up here makes the elsif
+	# test below cleaner.
+
+	my ( $package, $subname ) = $run =~ /^(.+)::(.+?$)/;
+
+	# after looking for placeholders, check for a 
+	# fully-qualified sub, then a method then 
+	# anything lying around in the current package.
+	# if none of these is found the caller gets back
+	# a string.
 
 	if( $run eq '' or $run eq 'PHONY' )
 	{
 		$run = sub { 0 };
 	}
-	elsif( my $sub = $que->can( $run ) )
+	elsif( $package && $subname && ( my $sub = $package->can($subname)) )
+	{
+		$run = sub { $sub->( $job ) };
+	}
+	elsif( $sub = $que->can( $run ) )
 	{
 		$run = sub { $que->$sub( $job ) };
 	}
@@ -592,12 +605,11 @@ sub prepare
 	# items without '=' are the sequence information, items
 	# with '=' in them have already been dealt with above.
 
-	print "$$: Starting rule processing"
-		if $verbose;
+	print "$$: Starting rule processing" if $verbose;
 
 	for( grep { ! /=/ } @linz )
 	{
-		my( $a, $b ) = map { [ split ] } split /:/, $_, 2;
+		my( $a, $b ) = map { [ split ] } split /[^:]:[^:]/, $_, 2;
 
 		croak "$$: Bogus rule '$_' has no targets"
 			unless $a;
@@ -1378,7 +1390,7 @@ overhead.
 
 The pidfile serves three purposes:
 
-=over4
+=over 4
 
 =item Restarts
 
@@ -1910,7 +1922,7 @@ this that I can think of.
 
 =head1 Known Bugs
 
-Empty aliases (e.g., "foo=")will pass an empty string to the shell.
+None... yet.
 
 =head1 Author
 

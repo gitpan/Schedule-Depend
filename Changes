@@ -1,7 +1,83 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
-0.24 Wed May 15 14:33:14 CDT 2002
+0.25 Wed May 22 02:17:08 CDT 2002
+
+ -	Blocking on job slots displays the blocked jobs if verbose > 1.
+
+ -	Replace $que->{abort} with $que->{failure} to avoid confusion
+ 	with $que->{noabort} switch value. Failed queues now have
+	the message in $que->{failure}. This doesn't effect the 
+	external interface (aside from removing the "abort" accessor
+	method and replacing it with "failure").
+
+ -	Added "force" argument to override precheck croaking
+ 	on non-empty pidfiles without an exit. Used with
+	restart, it forces execution of anything without an
+	exit status in the pidfile.
+
+ -	Decided on group syntax. Using '::' for groups is 
+ 	problematic due to Perl's module notation; almost
+	anything else might appear in a shell alias. Current
+	notation is to enclose the jobs in angle-brackets
+	("<>") surrounded by whitespace. The closing delimeter
+	makes it a bit more obvious that the group "encloses"
+	the jobs.
+
+		groupname < job1 job2 : job3 >
+		groupname < job4 : job5 job6 >
+
+	creates a single group with 6 jobs in it. Syntax for
+	the group is a full scheudule. The default handler is
+	group (i.e., groupname is aliased to "group" if none
+	already exists when the group is processed).
+
+
+	The group mechanism will look something like:
+
+		Create a lookaside list for the group with the group's
+		schedule in it. The schedule is keyed by the groupname.
+
+		When the group becomes runnable then $que->group('groupname')
+		is called, which prepares the schedule from the lookaside
+		list and then executes it. If the groupname is aliased to
+		another method then that one will be used to dispatch the
+		group's schedule (e.g., $que->mygroup('groupname') via 
+		"groupname = mygroup" in the schedule).
+
+	The schedule then looks something like:
+
+		transform = group	# optional, added automatically 
+
+		transform < mungethis : mungethat >
+		transform < mungeother : >
+
+		transform : extract
+		load : transform
+
+	This creates a group with munge* jobs in it (they can be spread
+	out however is most useful). The group handler converts this into
+	something like:
+
+		transform = group
+
+		transform : extract
+		load : transform
+
+	When "transform" becomes runnable it is called via
+	$que->group( 'transform' ) which calles subque with
+	( sched => 'mungethis mungethat mungeother :' ) then
+	prepares executes the sub-que.
+
+
+ -	More doc updates. They now reflect most of reality.
+ 	Included example of using multi-line entries in the
+	schedule via array ref.
+
+ -	Fix typos in progress message trim, docs.
+
+
+0.24 
 
  -	unalias now returns an array of two items: the id string 
  	and a closure. the string is used in execute for displaying

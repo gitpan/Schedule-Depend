@@ -26,7 +26,7 @@ print "ok 1\n";
 # housekeeping & package variables
 ########################################################################
 
-use Cwd qw( &abs_path );
+use Cwd qw( &cwd &abs_path );
 
 use Data::Dumper;
 	$Data::Dumper::Purity		= 1;
@@ -152,20 +152,25 @@ sub test_restart
 	die $@ if $@;
 }
 
-sub test_subcall
+sub test_derived
 {
 	print STDERR "Testing subcall w/ debug (seq $ok)\n";
 
-	my @argz = ( @defargz, sched => shift, verbose => 1 );
+	my $sched = shift;
 
-	$DB::single = 1;
+	my @argz = ( @defargz, sched => $sched, verbose => 1 );
 
-	eval { Testify->prepare( @argz )->execute };
+	eval
+	{
+		my $que = Testify->prepare( @argz )->debug;
+		
+		$que->execute;
+	};
 
 	die $@ if $@;
 }
 
-sub test_subcall_restart
+sub test_derived_restart
 {
 	print STDERR "Testing subcall w/ restart (seq $ok)\n";
 
@@ -176,26 +181,18 @@ sub test_subcall_restart
 	die $@ if $@;
 }
 
-sub test_subque
-{
-	print STDERR "Testing subque execution (seq $ok)\n";
-
-	# this requires two schedules.
-}
-
-
 sub testify
 {
 	my $badnews = 0;
 
-	my @subz =
+	my %subz =
 	(
-		\&test_debug,
-		\&test_execute,
-		\&test_debug_execute,
-		\&test_restart,
-		\&test_subcall,
-		\&test_subcall_restart,
+		test_debug				=> \&test_debug,
+		test_execute			=> \&test_execute,
+		test_debug_execute		=> \&test_debug_execute,
+		test_restart			=> \&test_restart,
+		test_derived			=> \&test_derived,
+		test_derived_restart	=> \&test_derived_restart,
 	);
 
 	open STDOUT, '> test.log' or die "test.log: $!";
@@ -208,15 +205,15 @@ sub testify
 		{
 			my $sched = $defsched . "\n$debug" . "\nmaxjob = $maxjob";
 
-			for( @subz )
+			for $sub ( keys %subz )
 			{
 				++$ok;
 
-				print "\nTesting Sequence: $ok\n";
+				print "\nTest $ok:  $sub / $debug / $maxjob\n";
 
 				eval
 				{
-					&$_( $sched );
+					$subz{$sub}->( $sched );
 					die "$$: Forkatosis in Depend" if $$ != $pid;
 				};
 
@@ -239,6 +236,8 @@ sub testify
 
 	{
 		print "\nTesting alias syntax: $ok\n";
+
+		unlink <./tmp/*>;
 
 		package Findit;
 
@@ -271,18 +270,55 @@ sub testify
 			verbose	=> 0,
 		);
 
-		$DB::single = 1;
-
 		eval { Findit->prepare( %argz )->execute };
 
 		++$ok;
 		print STDERR $@ ? "\nnot ok $ok\t:$@\n" : "\nok $ok\n";
 	}
-	eval
+
 	{
-		unlink <$rundir/*>;
-		rmdir $rundir;
-	};
+		print STDERR "Testing group execution (seq $ok)\n";
+
+		unlink <./tmp/*>;
+
+		my $sched = 
+		qq(
+			foo : before
+			after : foo
+
+			before = ls -lt ./tmp
+			after  = ls -lt ./tmp
+
+			# two files should be 5 sec apart.
+
+			foo < bar : bletch blort >
+			foo < bar    = /bin/date > $ENV{PWD}/tmp/after >
+			foo < bletch = /bin/date > $ENV{PWD}/tmp/before >
+			foo < blort  = /bin/sleep 5 >
+		);
+
+		$DB::single = 1;
+
+		my %argz =
+		(
+			%defaultz,
+			verbose => 2,
+			sched => $sched,
+		);
+
+		my $que = Schedule::Depend->prepare(%argz);
+
+# use for debugging the group sub
+#		$que->group( 'foo' );
+		
+		$que->debug->execute;
+	}
+
+#	eval
+#	{
+#		unlink <$rundir/*>;
+#		rmdir $rundir;
+#	};
 
 	$badnews
 }

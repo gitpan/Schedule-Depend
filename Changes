@@ -1,7 +1,14 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
-2.01 Sun Dec 26 06:34:50 EST 2004
+2.2 Mon Jan 10 08:20:47 UTC 2005
+
+- Added sanity check for missing classes after use base of
+  the user's use_base list. This spots missing classes (i.e,
+  ones that didn't compile) before their sub's fail up as
+  "shellexec" calls at runtime.
+
+2.1 Sun Dec 26 06:34:50 EST 2004
 
 - Fixed a typo in Utilities, replaced {basename} with {basenames} in 
   config check for localpath.

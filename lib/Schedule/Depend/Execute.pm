@@ -44,6 +44,8 @@ use Pod::Usage;
 #
 # Note: the que object ends up blessed into this class,
 # not S::D.
+#
+# defining @ISA here avoids runtime issues with use strict.
 
 use base
 qw(
@@ -214,6 +216,24 @@ sub runsched
 			local $" = ' ';
 
 			eval "use base qw( @$base )";
+
+			# sanity check: at this point this package should 
+			# be one of each of the base packages.
+
+			my @missing =
+				map { __PACKAGE__->isa( $_ ) ? () : $_ } @$base;
+
+			if( @missing )
+			{
+				log_message
+					'Unable to use base of packages:',
+					@missing,
+					'Requested:',
+					@$base,
+				;
+
+				croak 'Failed to import all base classes'
+			}
 		}
 		
 		if( my $que = __PACKAGE__->prepare( $valuz->{$global} )->validate )

@@ -1014,7 +1014,7 @@ sub prepare
 		s/\s+/ /g;
 	}
 
-	my @linz = grep /.+/, @{ $argz{sched} }
+	my @linz = grep /\S/, @{ $argz{sched} }
 		or croak "$$: Bogus prepare: empty depend list.";
 
 	print "$$: Preparing Schedule From:", @linz, ''

@@ -3,4 +3,3 @@ Depend.pm
 MANIFEST
 Makefile.PL
 test.pl
-examples/RBTMU.pm

@@ -151,6 +151,8 @@ sub runsched
 
 	my $defaults = \%Schedule::Depend::Execute::defaults;
 
+	$defaults->{global} = (split /::/, $caller)[0];
+
 	# won't get far without this...
 
 	$cmdline->{sched} = shift || $defaults->{sched}

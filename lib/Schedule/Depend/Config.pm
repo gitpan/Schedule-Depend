@@ -113,18 +113,13 @@ sub moduleconfig
 
 	my $valuz = $config->{user} || $config;
 
-##? is this really necessary?
-##?
-##?	$valuz->isa( __PACKAGE__ )
-##?		or die "Bogus moduleconfig: config is not a Config";
-
 	# the caller gets the global values from the 
 	# config hash overridden by module-specific
 	# ones.
 
-	my ( $package, $module ) = (split /::/, caller)[0,-1];
+	my ( $global, $local ) = (split /::/, caller)[0,-1];
 
-	$global = $valuz->{global} || $package;
+	$global = $valuz->{global} if $valuz->{global};
 
 	# merge the global and module hashes by simply expanding the
 	# full hashes into a single new hash. this flattens the
@@ -140,9 +135,9 @@ sub moduleconfig
 	# give back shallow copies for nested structures.
 
 	$global = $valuz->{$global} ? $valuz->{$global} : {};
-	$module = $valuz->{$module} ? $valuz->{$module} : {};
+	$local  = $valuz->{$local}  ? $valuz->{$local}  : {};
 
-	my $a = { %$global, %$module };
+	my $a = { %$global, %$local };
 
 	wantarray ? %$a : $a
 }

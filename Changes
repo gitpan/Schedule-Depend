@@ -1,6 +1,11 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+2.01 Sun Dec 26 06:34:50 EST 2004
+
+- Fixed a typo in Utilities, replaced {basename} with {basenames} in 
+  config check for localpath.
+
 2.00 Sun Dec 26 06:34:50 EST 2004
 
 - Added doc's for Execute, Utilities, and Config

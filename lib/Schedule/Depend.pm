@@ -697,7 +697,51 @@ sub shellexec
 # deal with groups & sub-queues.
 ########################################################################
 
-# shedules with groups use an alias for the groupname and then
+########################################################################
+# generate a group on the fly running the same que method on each
+# of the list items passed in. this makes up for having only a single
+# variable argument in the passing protocol: S::D::Execute can call
+# jobs which hard-code the method or pick it up from defaults and
+# then call this with a method name and list.
+
+sub sched_list
+{
+	my $que = shift
+		or die "Bogus sched_list: missing que object";
+
+	$DB::single = 1 if $que->debug;
+
+	my $config = $que->moduleconfig
+		or die "$$: Bogus sched_list: que missing user data.";
+
+	my $method = shift
+		or die "Bogus sched_list: missing method name";
+
+	$que->can( $method )
+		or die "Bogus sched_list: the que cannot '$method'";
+
+	my $list = shift
+		or die "Bogus sched_list: missing list";
+
+	# this could also call subsched... issue there is 
+	# compounding the parallel execution. for now 
+	# single-stream the thing.
+
+##?	my $name = "sched_list-$method";
+##?
+##?	my @sched = map { ( "$_ : ", "$_ = $method" ) } @$list;
+
+	$que->$method( $_ ) for @$list;
+
+	# caller gets back the method and list processed
+	# back as a string.
+
+	join ' ', $method, @$list
+}
+
+
+########################################################################
+# schedules with groups use an alias for the groupname and then
 # assign jobs w/in the group:
 #
 #	name = rungroup
@@ -726,10 +770,11 @@ sub group
 	$que->subque( $sched )->execute
 }
 
-# this is meaningless unless the object used
-# to access this method really is based on S::D.
-# in which case, the only thing useful to bless
-# the results into is ref $que.
+########################################################################
+# this is meaningless unless the object used to access
+# this method really is based on S::D.  in which case,
+# the only thing useful to bless the results into is
+# ref $que.
 
 sub subque
 {

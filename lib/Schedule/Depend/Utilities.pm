@@ -16,10 +16,11 @@ our $VERSION=0.90;
 
 use Carp;
 
+use Symbol;
+
 use File::Basename;
 
 use FindBin qw( $Bin );
-
 
 
 # set the dumper default formats.
@@ -83,8 +84,6 @@ sub import
 # package variables
 ########################################################################
 
-our $global = '';
-
 our $basenames = '';
 
 our $defaultz = \%Schedule::Depend::Execute::defaults;
@@ -141,6 +140,7 @@ our $defaultz = \%Schedule::Depend::Execute::defaults;
 
 		-1
 	}	
+
 }
 
 ########################################################################
@@ -159,7 +159,7 @@ sub send_mail
 
 	unless( $mailargz{To} )
 	{
-		$mailargz{To} = (getpwuid $>)[0] . '@localhost'
+		$mailargz{To} = (getpwuid $>)[0] . '@localhost';
 
 		log_error "Bogus send_mail: defaulting email to '$mailargz{To}'";
 	}
@@ -272,7 +272,7 @@ sub nastygram
 	# without a que object, use the global defaults
 	# to find things instead.
 
-	$global ||= $defaultz->{global};
+	my $global = $defaultz->{global};
 
 	my $config = $defaultz->{$global}
 		or warn "Bogus config: missing global 'Schedule::Depend' entry";
@@ -327,10 +327,9 @@ sub nastygram
 
 sub localpath
 {
+	my $global = $defaultz->{global};
 
-	$global ||= $defaultz->{global_key};
-
-	$basenames ||= $defaultz->{$global}{basename};
+	$basenames ||= $defaultz->{$global}{basenames};
 
 	# make a local copy of the last argument; replace
 	# symbolic names from the defaults with real 
@@ -346,6 +345,10 @@ sub localpath
 		push @_, $name
 	}
 
+	# default directory is '../var/tmp'.
+
+	unshift @_, '../var/tmp' unless grep m{/}, @_;
+
 	my $path = join '/', ( @_ ? @_ : '' );
 
 	$path = "$Bin/$path" unless $path =~ m{^/};
@@ -356,9 +359,6 @@ sub localpath
 	# if none is given. 
 
 	$path .= '.dump' if ! -e $path && -e "$path.dump";
-
-	-e dirname $path
-		or carp "Nonexistant directory: $path";
 
 	# caller gets back the path, which may not 
 	# exist, yet.

@@ -7,7 +7,7 @@ WriteMakefile
 (
 	NAME	=> "Schedule::Depend",
 
-    VERSION	=> '2.0',
+    VERSION	=> '2.1',
 
 	ABSTRACT	=>
 'Parallel process startup with dependencies and restart.

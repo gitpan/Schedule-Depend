@@ -1,6 +1,21 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+0.24 Wed May 15 14:33:14 CDT 2002
+
+ -	unalias now returns an array of two items: the id string 
+ 	and a closure. the string is used in execute for displaying
+	job status, the closure does the deed. This avoids the 
+	current stringified code referent going into the pidfile
+	as the job identifier.
+
+ -	Added "STUB" with behavior identical to PHONY (i.e., returns
+ 	$job (STUB) immediately). Only purpose is to improve documentation
+	during devleopment.
+
+ -	Internal change to handle subque argument. This should not be
+ 	visible if the "subque" argument is not passed to preapre.
+
 0.23 Wed May 15 11:12:44 CDT 2002
 
  -	Add'l sanity check in prepare for assigning to maxjob: arguments

@@ -79,13 +79,14 @@ my @defargz =
 
 		my $job = $que->{alias}{$_[0]} || $_[0];
 
-		# gotta make sure we return zero from the sub...
+		# basically, forces everything in the schedule to 
+		# be PHONY.
 
-		sub
-		{
-			print STDOUT "\n$$: closure for $job\n";
-			0
-		}
+		my $string = "$$: $job";
+
+		my $sub = sub { $string };
+
+		( $string, $sub )
 	}
 }
 
@@ -156,6 +157,8 @@ sub test_subcall
 	print STDERR "Testing subcall w/ debug (seq $ok)\n";
 
 	my @argz = ( @defargz, sched => shift, verbose => 1 );
+
+	$DB::single = 1;
 
 	eval { Testify->prepare( @argz )->execute };
 

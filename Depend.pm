@@ -1,4 +1,5 @@
 # see DATA for pod.
+# code best viewd with tabs set to 4 spaces.
 
 ########################################################################
 # housekeeping
@@ -6,7 +7,7 @@
 
 package Schedule::Depend;
 
-our $VERSION = 0.23;
+our $VERSION = 0.24;
 
 use strict;
 
@@ -31,11 +32,6 @@ use constant ABORT	=> -1;
 use Carp;
 
 use File::Basename;
-
-# until I resolve an issue with list context this is broken;
-# regex works well enough for now given the required syntax.
-#
-# use Text::Balanced qw( &extract_codeblock );
 
 # pretty-print the object in debug mode.
 
@@ -360,9 +356,38 @@ sub precheck
 # this because "Name->blah" won't be any kind
 # of valid subroutine w/in the package.
 #
-# question is whether the $que->can will handle
-# this properly or another test is required in
-# order to deal with these.
+# generate the closre called in the child process:
+#
+# process $run into a sub referent if we can find
+# a way:
+#
+#	phony aliases return a numerically false exit
+#	string immediately.
+#
+#	code blocks are evaled into a sub -- note that
+#	this leaves any variables in the block expressed
+#	here, in this package.
+#
+# Note: from here down the sub's are called with an
+# argument of the original job tag from the
+# schedule. see the POD for examples of where
+# this can be useful for dispatching multiple
+# jobs through the same code.
+#
+#	check for fully qualified subnames -- this has
+# 	to be done AFTER checking for code blocks, which
+# 	may contain legit "::". since S::D may not have
+# 	already use-ed the module, require it here --
+#	ignore any error since the package may be
+#
+#	check if the que object has a method to handle
+# 	the call.
+#
+#	check if the current package has a subroutine
+#	name.
+#
+# caller gets back the anonymous sub referent or
+# the contents of $run.
 
 sub unalias
 {
@@ -381,47 +406,19 @@ sub unalias
 		$que->{alias}{$job} : $job;
 
 	# this goes into the pidfile to identify what
-	# we are running. it will be the 2nd line of
-	# the file, before the exit codes.
+	# is being run. it will be the 2nd line of the file,
+	# before the child (stringy) exit and parent (fork
+	# return) exit lines.
 
-	my $pidstring = "$job = $run";
+	my $idstring = $job eq $run ? $job : "$job ($run)";
 
-	# process $run into a sub referent if we can find
-	# a way:
-	#
-	#	phony aliases return a numerically false exit
-	#	string immediately.
-	#
-	#	code blocks are evaled into a sub -- note that
-	#	this leaves any variables in the block expressed
-	#	here, in this package.
-	#
-	# Note: from here down the sub's are called with an
-	# argument of the original job tag from the
-	# schedule. see the POD for examples of where
-	# this can be useful for dispatching multiple
-	# jobs through the same code.
-	#
-	#	check for fully qualified subnames -- this has
-	# 	to be done AFTER checking for code blocks, which
-	# 	may contain legit "::". since S::D may not have
-	# 	already use-ed the module, require it here --
-	#	ignore any error since the package may be
-	#
-	#	check if the que object has a method to handle
-	# 	the call.
-	#
-	#	check if the current package has a subroutine
-	#	name.
-	#
-	# caller gets back the anonymous sub referent or
-	# the contents of $run.
+	# generate the closure.
 
 	my $sub = 0;
 
-	if( $run eq 'PHONY' )
+	if( $run eq 'PHONY' || $run eq 'STUB' )
 	{
-		$sub = sub { "$job = PHONY" };
+		$sub = sub { $idstring }
 	}
 	elsif( $run =~ /^({.+})$/ )
 	{
@@ -450,13 +447,12 @@ sub unalias
 		$sub = sub { $que->shellexec($run) };
 	}
 
-	croak "$$: Bogus unalias: no subroutine for $pidstring"
+	croak "$$: Bogus unalias: no subroutine for $idstring"
 		unless $sub;
 
-	print "$$: $pidstring ($sub)" if $que->{verbose};
+	print "$$: $idstring ($sub)" if $que->{verbose};
 
-	$sub
-
+	( $idstring, $sub )
 }
 
 # we know a bit more about the speicfics of
@@ -1216,7 +1212,7 @@ sub execute
 				# which is zero now that we aren't calling from
 				# the prepare method.
 
-				my $run = $que->unalias( $job );
+				my ( $substring, $sub ) = $que->unalias( $job );
 
 				# open the pidfile first, better to croak here than
 				# leave a job running w/o a pidfile.
@@ -1235,14 +1231,14 @@ sub execute
 					# skip forking in the debugger, I have enough
 					# problems already...
 
-					print "Debugging: $job ($run)\n"
+					print "Debugging: $substring\n"
 						if $print_progress;
 
 					# make sure anyone who follows us knows about
 					# the debug pass, don't store zero to avoid
 					# problems with restart mode.
 
-					print $fh "$$\ndebug $job ($run)\n1";
+					print $fh "$$\ndebug $substring\n1";
 
 					$que->dequeue( $job );
 					$que->complete( $job );
@@ -1268,7 +1264,7 @@ sub execute
 						# the pidfile can be ignored since the previous exit
 						# was clean.
 
-						print "$$: Skipping $job ($run) on restart."
+						print "$$: Skipping $substring on restart."
 							if $print_progress;
 					}
 					elsif( $reason == ABORT )
@@ -1282,7 +1278,7 @@ sub execute
 						# %jobz doesn't get updated here: since nothing is forked
 						# there isn't a pid to store anywhere.
 
-						print "$$: Skipping $job ($run) on aborted prerequisite."
+						print "$$: Skipping $substring on aborted prerequisite."
 							if $print_progress;
 
 						print $fh "Failed prerequisite in noabort mode\n-1";
@@ -1313,9 +1309,9 @@ sub execute
 					# we do have to update the pidfile, however, to show
 					# that the job was aborted.
 
-					print "$$: Skipping $job ($run) due to: $reason";
+					print "$$: Skipping $substring due to: $reason";
 
-					print $fh "$$\nAbort: $reason: $job ($run)\n-1";
+					print $fh "$$\nAbort: $reason: $substring\n-1";
 
 					$que->dequeue( $job );
 					$que->complete( $job );
@@ -1343,7 +1339,7 @@ sub execute
 
 					if( my $pid = fork )
 					{
-						print $fh "$pid\n$run";
+						print $fh "$pid\n$substring";
 
 						$jobz->{$pid} = $job;
 
@@ -1364,7 +1360,7 @@ sub execute
 
 						# remember to do this before closing stdout.
 
-						print "$$: Executing: $job ($run)\n"
+						print "$$: Executing: $substring\n"
 							if $print_detail;
 
 						# Note: make sure to exit w/in this block to
@@ -1372,7 +1368,7 @@ sub execute
 						# an exit since it stops running this code.
 						#
 						# single-argument exec allows the shell
-						# to expand any meta-char's in $run.
+						# to expand any meta-char's in $sub.
 						#
 						# braces avoid compiler warning about
 						# unreachable code on the croak.
@@ -1398,7 +1394,8 @@ sub execute
 						#
 						# Note: child never reaches the point where $fh
 						# is closed in the main loop.
-						my $result = $que->runjob( $run );
+
+						my $result = $que->runjob( $sub );
 
 						print $fh $result;
 
@@ -1551,6 +1548,8 @@ sub execute
 
 __END__
 
+=pod
+
 =head1 Name
 
 Schedule::Depend
@@ -1560,20 +1559,20 @@ Schedule::Depend
 Single argument is assumed to be a schedule, either newline
 delimited text or array referent:
 
-	my $q = Scheduler->prepare( "newline delimited schedule" );
+	my $que = Scheduler->prepare( "newline delimited schedule" );
 
-	my $q = Scheduler->prepare( [ qw(array ref of schedule lines) ] );
+	my $que = Scheduler->prepare( [ qw(array ref of schedule lines) ] );
 
 Multiple items are assumed to be a hash, which much include the
 "sched" argument.
 
-	my $q = Scheduler->prepare( sched => "foo:bar", verbose => 1 );
+	my $que = Scheduler->prepare( sched => "foo:bar", verbose => 1 );
 
 Object can be saved and used to execute the schedule or the schedule
 can be executed (or debugged) directly:
 
-	$q->debug;
-	$q->execute;
+	$que->debug;
+	$que->execute;
 
 	Scheduler->prepare( sched => $depend)->debug;
 	Scheduler->prepare( sched => $depend, verbose => 1  )->execute;
@@ -1586,7 +1585,7 @@ The "unalias" method can be safely overloaded for specialized
 command construction at runtime; precheck can be overloaded in
 cases where the status of a job can be determined easily (e.g.,
 via /proc). A "cleanup" method may be provided, and will be
-called after each job is complete.
+called after each job is complete if $que->can( "cleanup" ).
 
 See notes under "unalias" and "runjob" for how jobs are
 dispatched. The default methods will handle shell code
@@ -1641,7 +1640,12 @@ It is also possible to alias job strings:
 
 will wait until bar has finished, unalias foo to the
 command string and pass the expanded version wholesale
-to the system command.
+to the system command. Aliases can include fully qualified
+perl subroutines (e.g., " Foo::Bar::subname") or methods
+accessable via the $que object (e.g., "subname"), code 
+blocks (e.g., "{returns_nonzero; 0}". If no subroutine,
+method or perl block can be extracted from the alias then
+it is passed to the "shellexec" method as a string.
 
 See the "Schedules" section for more details.
 
@@ -1833,6 +1837,11 @@ gets run only after both abjob.ksh and another.ksh are
 done with and the validate program gets run only after all
 of the other three are done with.
 
+A job can be assigned a single alias, which must be on a 
+single line of the input schedule (or a single row in 
+schedleds passed in as arrays). The alias is expanded at
+runtime to determine what gets dispatched for the job.
+
 The main uses of aliases would be to simplify re-use of
 scripts. One example is the case where the same code gets
 run multiple times with different arguments:
@@ -1840,7 +1849,7 @@ run multiple times with different arguments:
 	# comments are introduced by '#', as usual.
 	# blank lines are also ignored.
 
-	a = /somedir/process 1
+	a = /somedir/process 1	# process is called with various arg's
 	b = /somedir/process 2
 	c = /somedir/process 3
 	d = /somedir/process 4
@@ -1861,8 +1870,31 @@ Would allow any variety of arguments to be run for the
 a-f code simply by changing the aliases, the dependencies
 remain the same.
 
+If the alias for a job is a perl subroutine call then the
+job tag is passed to it as the single argument. This 
+simplifies the re-use above to:
+
+	file1.gz = loadfile
+	file1.gz = loadfile
+	file1.gz = loadfile
+
+	file1.gz file2.gz file3.gz : /some/dir/download_files
+
+
+Will call $que->loadfile passing it "file1.gz" and so
+on for each of the files listed -- afte the download_files
+script exits cleanly.
+
+
 Another example is a case of loading fact tables after the
 dimensions complete:
+
+	fact1	= loadfile
+	fact2	= loadfile
+	fact3	= loadfile
+	dim1	= loadfile
+	dim2	= loadfile
+	dim3	= loadfile
 
 	fact1 fact2 fact3 : dim1 dim2 dim3
 
@@ -1871,30 +1903,35 @@ afterward. Note that stub entries are not required
 for the dimensions, they are added as runnable jobs
 when the rule is read.
 
-If the jobs unalias to the names of the que object's
-methods then the code will be called instead of sending
-the string through system. For example:
+Single-line code blocks can also be used as aliases.
+One use of these is to wrap legacy code that returns
+non-zero on success:
 
-	job = /path/to/runscript
-	foo = cleanup
-	bar = cleanup
-	xyz = cleanup
+	a = { ! returns1; }
 
-	job : ./startup
-	foo bar xyz : job
+or
 
-Will run ./startup via system in the local directory,
-run the job via system also then call $que->cleanup('foo'),
-$que->cleanup('bar'), and $que->cleanup('xyz') in parallel
-then finish (assuming they all exist, of course).
+	a = { eval{returns1}; $@ ? 1 : 0 }
 
-This allows the schedule to easily mix subroutine and
-shell code as necessary or convienent.
+to reverse the return value or pass non-zero if the 
+job died. The blocks can also be used for simple 
+dispatch logic:
 
-The final useful alais is an empty one, or the string
-"PHONY". This is used for placeholers, mainly for
-breaking up long lines or assembling schedules
-automatically:
+	a = { $::switchvar ? subone("a") : subtwo("a") }
+
+allows the global $::switchvar to decide if subone
+or subtwo is passed the argument. Note that the global
+is required since the dispatch will be made within
+the Schedule::Depend package.
+
+Altering the package for subroutines that depend on
+package lexicals can also be handled using a block:
+
+	a = { package MyPackage; somesub }
+
+Another alias is "PHONY", which is used for placeholder
+jobs. These are unaliased to sub{0} and are indended 
+to simplify grouping of jobs in the schedule:
 
 	waitfor = PHONY
 
@@ -1904,7 +1941,6 @@ automatically:
 	waitfor : job4
 
 	job5 job6 job7 : waitfor
-
 
 will generate a stub that immediately returns
 zero for the "waitfor" job. This allows the
@@ -1927,6 +1963,12 @@ are found:
 could call a subroutine "loadfile" for each of the paths
 without the "online" operation needing to be udpated for
 each path found.
+
+The other standard alias is "STUB". This simply prints
+out the job name and is intended for development where
+tracking schedule execution is useful. Jobs aliased to
+"STUB" return a closure "sub{print $job; 0}" and an id
+string of the job tag.
 
 =head2 Overloading unalias for special job expansion.
 
@@ -1967,35 +2009,23 @@ lead to the schedule:
 
 	fact2 fact1 : dim1 dim2 dim3
 
-and nothing more with unalias deciding what to do
-with the files at runtime:
-
-	sub unalias
-	{
-		my $que = shift;
-		my $datapath = shift;
-
-		my $tmudir  = dirname $0;
-
-		my $filename = basename $datapath;
-
-		my $tmufile = dirname($0) . '/' . basename($datapath) . '.tmu';
+and nothing more with
 
 		-e $tmufile or croak "$$: Missing: $tmufile";
 
 		# unzip zipped files, otherwise just redrect them
 
-		if( $datapath =~ /.gz$/ )
-		{
-			"gzip -dc $datapath | rb_ptmu $tmufile \$RB_USER"
-		}
-		else
-		{
+		my $cmd = $datapath =~ /.gz$/ ?
+			"gzip -dc $datapath | rb_ptmu $tmufile \$RB_USER" :
 			"rb_tmu $tmufile \$RB_USER < $datapath"
-		}
+		;
 
-		# caller gets back one of the two command
-		# strings
+		# caller gets back an id string of the file 
+		# (could be the command but that can get a bit
+		# long) and the closure that deals with the 
+		# string itself.
+
+		( $datapath, sub { shellexec $cmd } };
 	}
 
 
@@ -2003,23 +2033,19 @@ In this case all the schedule needs to contain are
 paths to the data files being loaded. The unalias
 method deals with all of the rest at runtime.
 
-Adding a method to the derived class for more complicated
-processing of the files (say moving the completed files
-to an archive area and zipping them if necessary) could
-be handled by passing a closure:
+Aside: This can be easily implemented by way of a simple
+convention and one soft link. The tmu (or sqlldr) config.
+files for each group of files can be placed in a single
+directory, along with a soft link to the #! code that 
+performs the load. The shell code can then use '.' for
+locating new data files and "dirname $0" to locate the 
+loader configuations. Given any reasonable naming convention
+for the data and loader files this allows a single executable 
+to handle mutiple data groups -- even multiple loaders --
+realtively simply.
 
-	sub unalias
-	{
-		my $que = shift;
-		my $datapath = shift;
 
-		-e $datapath or croak "$$: Nonexistint data file: $datapath";
 
-		# process the files, all further logic
-		# is dealt with in the loader sub.
-
-		sub { tmuload_method $datapath }
-	}
 
 Since code references are processed within perl this
 will not be passed to the shell. It will be run in the
@@ -2074,8 +2100,16 @@ scheduling patterns, just reduce any dealays in the schedule.
 
 =head2 Note on calling convention for closures from unalias.
 
-The closures generated in unalias vary on their parameter
-passing:
+Remember that unalias returns two items, an id string and 
+closure:
+
+	my ( $substring, $sub ) = unalias $job;
+
+The former is printed for error and log messages, the latter
+is executed via &$sub in the child process.
+
+The default closures vary somewhat in the arguments they
+are passed for handling the job and how they are called:
 
 	$run = sub { $sub->( $job ) };				$package->can( $subname )
 
@@ -2228,37 +2262,21 @@ be called with the que and job string being cleaned up after.
 
 =head2 unalias, runjob
 
-Expand an alias used in a rule, execute the
-unaliased job. Default case is to look the tag up in
-$que->{alias} and return either an alias or the
-original tag and exec the expanded string via the
-current shell.
+unalias is passed a single argument of a job tag and
+returns two items: a string used to identify the job 
+and a closure that executes it. The string is used for
+all log and error messages; the closure executed via 
+"&$sub" in the child process.
 
-One useful alternative is to use dynamic expansion
-of the tag being unaliased (e.g., the TMU example in
-the main notes, above). Another is to expand the
-tag into a code reference via:
+The default runjob accepts a scalar to be executed and 
+dispatches it via "&$run". This is broken out as a 
+separate method purely for overloading (e.g., for even
+later binding due to mod's in unalias).
 
-	sub unalias
-	{
-		my ($que,$job) = (shift,shift);
+For the most part, closures should be capable of 
+encapsulating any logic necessary so that changes to
+this subroutine will not be necessary.
 
-		no strict 'refs';
-		my $sub = \&$job;
-	}
-
-or
-
-	my $sub = sub { handler $job };
-
-to use a closure instead of various subroutine references.
-
-This allows queueing subroutines rather than shell code.
-
-runjob accepts a scalar to be executed, either via
-exec in the shell or a subroutine call. The default
-is to exit with the return status of a subroutine
-call or exec the shell code or die.
 
 =head2 precheck
 
@@ -2351,9 +2369,9 @@ to the scheduler. Something like:
 	{
 		my $cmd = shift;
 
-		if( my $sub = Schedule::Depend->unalias($cmd) )
+		if( my ( $name, $sub ) = Schedule::Depend->unalias($cmd) )
 		{
-			print "$$: Dispatching $cmd";
+			print "$$: Dispatching $name";
 
 			&$sub;
 		}
@@ -2375,7 +2393,7 @@ within it then that will be used to unalias the job strings:
 
 	my $blessificant = bless { alias => { foo => 'bar' } }, __PACKAGE__;
 
-	my $sub = $blessificant->unalias( $job );
+	my ( $string, $sub ) = $blessificant->unalias( $job );
 
 will return a subroutine that uses the aliased strings
 to find method names, etc.

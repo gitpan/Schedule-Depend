@@ -28,6 +28,13 @@ print "ok 1\n";
 
 use Cwd qw( &abs_path );
 
+use Data::Dumper;
+	$Data::Dumper::Purity		= 1;
+	$Data::Dumper::Terse		= 1;
+	$Data::Dumper::Indent		= 1;
+	$Data::Dumper::Deepcopy		= 0;
+	$Data::Dumper::Quotekeys	= 0;
+
 local $/;
 
 my $pid	= $$;
@@ -105,7 +112,7 @@ sub test_execute
 
 	if( my $que = Schedule::Depend->prepare( @argz ) )
 	{
-		$que->execute
+		$que->execute;
 	}
 	else
 	{
@@ -164,6 +171,13 @@ sub test_subcall_restart
 	eval { Testify->prepare( @argz )->execute };
 
 	die $@ if $@;
+}
+
+sub test_subque
+{
+	print STDERR "Testing subque execution (seq $ok)\n";
+
+	# this requires two schedules.
 }
 
 

@@ -7,7 +7,7 @@ WriteMakefile
 	NAME => "Schedule::Depend",
     'VERSION_FROM'	=> 'Depend.pm',
 	(
-		$] >= 5.005 ?
+		$] ge '5.006001' ? 
 		(
 			ABSTRACT	=> 'Parallel process startup with dependencies and restart.',
 			AUTHOR     	=> 'Steven Lembark (slembark@knightsbridge.com)',
@@ -22,7 +22,6 @@ WriteMakefile
 
 				Data::Dumper	=> 2.102,
 				File::Basename	=> 2.6,
-				Text::Balanced	=> 1.89,
 
 			},
 		)

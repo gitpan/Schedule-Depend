@@ -1,7 +1,60 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
-0.22 Sat May  4 13:43:47 CDT 2002
+0.23 Wed May 15 11:12:44 CDT 2002
+
+ -	Add'l sanity check in prepare for assigning to maxjob: arguments
+ 	only assign non-zero maxjob and only if maxjob is already zero.
+	This avoids the prepare aruments overriding a schedule limit. Since
+	zero is the default anyway this shouldn't cause any real pain.
+
+ -	Minor boilerplate added to status sub.
+
+ -	Comments.
+
+0.22 Tue May  7 22:48:42 CDT 2002
+
+ -	Added "informational" sub's to extract configuration and 
+ 	status of object:
+
+		alias()
+
+		alias( @items )
+
+			returns a copy of the alias hash (not the
+			original) or a hash slice of the requested
+			items from the hash.
+
+		status()
+		
+			Returns an anon. hash with the values of
+			alias(), restart, noabort, abort, verbose,
+			and debug keyed by their names.
+
+		These are mainly useful for creating sub-queues with
+		largely the same values as the parent.
+
+		And single-value items:
+
+		restart()	true/false if que is restarting
+		noabort()	true/false if que is running noabort.
+		abort()		current abort value (string).
+
+		verbose()	integer of verbosity.
+		debug()		true/false if in debug mode.
+
+		jobz()		$jobz{$pid} = $job (i.e., pid => job string ).
+		pidz()		$pidz{$pid} = $pidfilepath
+
+		rundir()	path of run directory
+		logdir()	path of log directory
+
+
+ -	Minor cleanups.
+		
+
+
+0.21 Sat May  4 13:43:47 CDT 2002
 
  -	PHONY jobs don't pre-check pidfiles.
 
@@ -24,9 +77,6 @@ Revision history for Perl extension Schedule::Depend
 
  -	test.pl is in serious need of updates to check all of
  	this properly. 
-
-
-0.21 
 
  -	Minor code, comment cleanups.
 

@@ -49,15 +49,10 @@ my $tmpdir	= "$dir/tmp";
 
 my $defsched = <DATA> . 
 qq{
-	# alias
-
 	cleanup = ls -l $tmpdir/*
-
-	# attributes
-
-	rundir	% $tmpdir
-	logdir	% $tmpdir
-	force	% 1
+	rundir	= $tmpdir
+	logdir	= $tmpdir
+	force	= 1
 };
 
 my @defargz =
@@ -194,9 +189,9 @@ sub testify
 
 	for my $maxjob ( qw(1 2 0) )
 	{
-		for my $debug ( '', 'debug % 1' )
+		for my $debug ( '', 'debug = 1' )
 		{
-			my $sched = $defsched . "\n$debug" . "\nmaxjob % $maxjob";
+			my $sched = $defsched . "\n$debug" . "\nmaxjob = $maxjob";
 
 			for $sub ( keys %subz )
 			{
@@ -339,8 +334,7 @@ f = echo "f"
 # in this case "startup" has no further dependencies and will
 # be the first job run.
 
-# the normal jobs depend on "startup" exiting zero.
-# the final exit status will be that of cleanup.
+# the normal jobs depend on our "startup" job being complete.
 
 a b c d e f : startup
 

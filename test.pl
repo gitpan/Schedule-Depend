@@ -1,5 +1,7 @@
 #!/usr/bin/perl
 
+package Schedule::Depend::Test;
+
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
@@ -54,6 +56,7 @@ my @defargz =
 ########################################################################
 # subroutines
 ########################################################################
+
 {
 	package Testify;
 
@@ -226,6 +229,35 @@ sub testify
 	$badnews
 }
 
+{
+	print "\nTesting Sequence: $ok\n";
+
+	package Find::The::Package::Sub;
+
+	sub getscalled { print "I got called!" }
+
+	my $sched = 
+	qq{
+		rundir	= $rundir
+		logdir	= $logdir
+
+		cleanup = rm -f $rundir/*
+
+		# getscalled should end up as a sub call in unalas.
+
+		cleanup : getscalled
+	};
+
+	my %argz = 
+	(
+		sched	=> $sched, 
+		verbose	=> 0,
+	);
+
+	eval { Schedule::Depend->prepare( %argz )->debug->execute };
+
+	print STDERR $@ ? "\nnot ok $ok\t:$@\n" : "\nok $ok\n";
+}
 
 
 # exit non-zero if we hit any snags.

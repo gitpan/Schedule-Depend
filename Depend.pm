@@ -43,7 +43,7 @@ use Data::Dumper;
 # package variables
 ########################################################################
 
-our $VERSION = 0.08;
+our $VERSION = 0.11;
 
 # hard-coded defaults used in the constructor (prepare). 
 # these can be overridden in the config file via aliases,
@@ -147,18 +147,55 @@ sub complete
 	}
 }
 
-# convert a job string to what gets executed.
-# see pod for details of alternative uses.
+# the result here gets passed to runjob for
+# execution. idea here is to hand off whatever
+# seems most useful to run.
+#
+# Changes to unalias should be carefully checked
+# againsed what runjob expects to handle.
+#
+# checking for the package is 
+# generally overkill but allows this to be
+# called as a normal subroutine and still
+# return something useful.
 
 sub unalias
 {
+	$DB::single = 1;
+
 	# default: expand the job via the que alias or
 	# just return the job as-is.
 
 	my $que = shift;
 	my $job = shift;
 
-	$que->{alias}{$job} || $job;
+	# unalias the job...
+
+	my $run = $que->{alias}{$job} || $job;
+
+	# now check for method/sub calls that match
+	# the alias. if one exists then call it with
+	# the original job tag as an argument.
+
+	if( $run eq '' or $run eq 'PHONY' )
+	{
+		$run = sub { 0 };
+	}
+	elsif( my $sub = $que->can( $run ) )
+	{
+		$run = sub { $que->$sub( $job ) };
+	}
+	elsif( $sub = __PACKAGE__->can($run) )
+	{
+		$run = sub { $sub->( $job ) };
+	}
+
+	# at this $run is either the expanded alias
+	# as a string or a closure that will run
+	# $job with the un-aliased string as an 
+	# argument.
+
+	$run
 }
 
 # execute the job after the process has forked.
@@ -171,6 +208,11 @@ sub unalias
 # nearly all cases, since the unalias method can 
 # deliver sub ref's or closures to handle nearly
 # anything.
+#
+# returning the exit status here makes avoiding
+# phorkatosis simpler and ensures that the exit
+# status gets written to the pidfile even if
+# our parent dies while we are running.
 
 sub runjob
 {
@@ -179,35 +221,28 @@ sub runjob
 
 	print "$$: $run" if $que->{verbose} > 1;
 
-	# this handles both subroutine ref's or shell-
-	# exec strings gracefully.
+	# caller gets back the result of running the
+	# code or of the system call.
 
 	if( ref $run eq 'CODE' )
 	{
-		# parent gets back the return value of $run.
-		# this should be an unsigned char, zero for
-		# success.
+		# the caller gets back whatever the code
+		# reference returns. anything not false
+		# gets printed (e.g., warning messages).
+		#
+		# exectution only aborts if the NUMERIC
+		# value of the return is true -- returning
+		# a text message will not abort execution.
 
-		exit &$run;
+		&$run;
 	}
 	else
 	{
-		# exec $run via the shell or die trying.
+		# alwyas hands back a number, so the 
+		# normal exit/signal extraction applies.
 
-		exec $run;
-
-		die "$$: $run: $!";
+		system( $run );
 	}
-
-	# CODE IN THIS METHOD SHOULD NEVER GET THIS FAR.
-	# IF IT DOES THEN EITHER THE EXIT WASN'T CALLED,
-	# THE CODE DIDN'T EXEC OR DIE PROPERLY OR THERE
-	# WAS A CODING ERROR IN THE IF/ELSE LOGIC THAT
-	# FELL THROUGH THE CRACKS. 
-	#
-	# BEING HERE IS A MAJOR CODING ERROR. PERIOD.
-
-	die "$$: Error: Mangled runjob call, Phorkatosis imminent";
 }
 
 # called prior to job execution in all modes to determine if the 
@@ -376,8 +411,6 @@ sub precheck
 
 sub prepare
 {
-	$DB::single = 1;
-
 	local $\ = "\n";
 	local $, = "\n";
 	local $/ = "\n";
@@ -783,6 +816,10 @@ sub execute
 
 	local $SIG{CHLD} = 'DEFAULT';
 
+	# ignore HUP's while we are forking.
+
+	local $SIG{HUP}	 = 'IGNORE';
+
 	# use for logging messages to make sure that the jobs are
 	# really run in parallel.
 
@@ -1022,12 +1059,38 @@ sub execute
 						open STDOUT, '>', $outpath or croak "$outpath: $!";
 						open STDERR, '>', $errpath or croak "$errpath: $!";
 
-						# do the deed or die trying...
+						# do the deed, record the result and exit.
+						# forcing the numeric context allows code
+						# to return a warning or mesage without the
+						# que aborting.
+						
+						my $exit = $que->runjob( $run );
 
-						$que->runjob( $run );
+						warn "$$: $job: $exit" if $exit;
+						
+						# the status and signal tests are guaranteed to
+						# work for system (stringy $job) calls. if a sub
+						# returns a string the += 0 will convert it to a
+						# numeric zero.
 
-						warn "\n$$: Bogus call: " . __PACKAGE__ .
-							'execute failed to exit';
+						$exit += 0;
+
+						if( my $stat = $exit >> 8 )
+						{
+							carp "$$: Non-zero return for $job: $stat";
+						}
+						elsif( my $signal = $exit & 0xFF )
+						{
+							carp "$$: $job stopped by signal: $signal";
+						}
+						else
+						{
+							print "$$: Completed $job" if $print_progress;
+						}
+
+						print $fh $exit;
+
+						exit $exit;
 					}
 					else
 					{
@@ -1170,9 +1233,9 @@ delimited text or array referent:
 	my $q = Scheduler->prepare( [ qw(array ref of schedule lines) ] );
 
 Multiple items are assumed to be a hash, which much include the
-"depend" argument.
+"sched" argument.
 
-	my $q = Scheduler->prepare( depend => "foo:bar", verbose => 1 );
+	my $q = Scheduler->prepare( sched => "foo:bar", verbose => 1 );
 
 Object can be saved and used to execute the schedule or the schedule
 can be executed (or debugged) directly:
@@ -1180,13 +1243,12 @@ can be executed (or debugged) directly:
 	$q->debug;
 	$q->execute;
 
-	Scheduler->prepare( depend => $depend)->debug;
-	Scheduler->prepare( depend => $depend, verbose => 1  )->execute;
+	Scheduler->prepare( sched => $depend)->debug;
+	Scheduler->prepare( sched => $depend, verbose => 1  )->execute;
 
-Since the deubgger exits nonzero on a bogus queue:
+Since the deubgger returns undef on a bogus queue:
 
-	Scheduler->prepare( depend => $depend)->debug->execute;
-
+	Scheduler->prepare( sched => $depend)->debug->execute;
 
 The "unalias" method can be safely overloaded for specialized
 command construction at runtime; precheck can be overloaded in
@@ -1194,6 +1256,9 @@ cases where the status of a job can be determined easily (e.g.,
 via /proc). A "cleanup" method may be provided, and will be
 called after the job is complete.
 
+See notes under "unalias" and "runjob" for how jobs are
+dispatched. The default methods will handle shell code
+sub names automatically.
 
 =head1 Arguments
 
@@ -1215,17 +1280,35 @@ or no dependencies:
 
 	runs_immediately :
 
+Which are unnecessary but can help document the code.
+
 Dependencies without a wait_for argument are an error (e.g.,
 ": foo" will croak during prepare).
 
 The schedule can be passed as a single argument (string or
 referent) or with the "depend" key as a hash value:
 
-	depend => [ schedule as seprate lines in an array ]
+	sched => [ schedule as seprate lines in an array ]
 
 	or
 
-	depend => "newline delimited schedule, one item per line";
+	sched => "newline delimited schedule, one item per line";
+
+It is also possible to alias job strings:
+
+	foo = /usr/bin/find -type f -name 'core' | xargs rm -f
+
+	...
+
+	foo : bar
+
+	...
+
+will wait until bar has finished, unalias foo to the 
+command string and pass the expanded version wholesale
+to the system command.
+
+See the "Schedules" section for more details.
 
 =item verbose
 
@@ -1268,7 +1351,8 @@ from the que object itself.
 
 These can be supplied via the schedule using aliases 
 "rundir" and "logdir". Lacking any input from the schedule
-or arguments all output goes into the #! file's directory.
+or arguments all output goes into the #! file's directory
+(i.e., dirname $0).
 
 Note: The last option is handy for running code via soft link 
 w/o having to provide the arguments each time. The RBTMU.pm
@@ -1292,29 +1376,42 @@ any running jobs and launches anything that wasn't started.
 This should allow a schedule to be re-run with a minimum of
 overhead.
 
-Each job is executed via fork/exec (or sub call, see notes
-for unalias and runjob). The parent writes out a 
-pidfile with initially two lines: pid and command line. It
-then closes the pidfile.  After the parent detectes the child
-process exiting the exit status is written to the file and
-the file closed.
-
 The pidfile serves three purposes:
 
- -	On restart any leftover pidfiles with
+=over4
+
+=item Restarts
+
+ 	On restart any leftover pidfiles with
 	a zero exit status in them can be skipped.
 
- -	Any process used to monitor the result of
+=item Waiting
+
+ 	Any process used to monitor the result of
 	a job can simply perform a blocking I/O to
 	for the exit status to know when the job
 	has completed. This avoids the monitoring
 	system having to poll the status.
 
- -	Tracking the empty pidfiles gives a list of
+=item Tracking
+
+ 	Tracking the empty pidfiles gives a list of
 	the pending jobs. This is mainly useful with
 	large queues where running in verbose mode 
 	would generate execesive output.
 
+=back
+
+Each job is executed via fork/exec (or sub call, see notes
+for unalias and runjob). The parent writes out a 
+pidfile with initially two lines: pid and command line. It
+then closes the pidfile. The child keeps the file open and
+writes its exit status to the file if the job completes;
+the parent writes the returned status to the file also. This
+makes it rather hard to "loose" the completion and force an
+abort on restart.
+
+=head2 Schedules
 
 The configuration syntax is make-like. The two sections
 give aliases and the schedule itself. Aliases and targets
@@ -1384,30 +1481,151 @@ afterward. Note that stub entries are not required
 for the dimensions, they are added as runnable jobs 
 when the rule is read.
 
-Overloading the "unalias" method to properly select the
-shell comand for loading the files would leave this as
-the entire schedule. An example overloaded method would
-look like:
+If the jobs unalias to the names of the que object's
+methods then the code will be called instead of sending
+the string through system. For example:
+
+	job = /path/to/runscript
+	foo = cleanup
+	bar = cleanup
+	xyz = cleanup
+
+	job : ./startup
+	foo bar xyz : job
+
+Will run ./startup via system in the local directory,
+run the job via system also then call $que->cleanup('foo'),
+$que->cleanup('bar'), and $que->cleanup('xyz') in parallel
+then finish (assuming they all exist, of course).
+
+This allows the schedule to easily mix subroutine and 
+shell code as necessary or convienent.
+
+The final useful alais is an empty one, or the string
+"PHONY". This is used for placeholers, mainly for 
+breaking up long lines or assembling schedules 
+automatically:
+
+	waitfor =
+
+	waitfor : job1
+	waitfor : job2
+	waitfor : job3
+	waitfor : job4
+
+	job5 job6 job7 : waitfor
+
+	
+will generate a stub that immediately returns
+zero for the "waitfor" job. This allows the 
+remaining jobs to be hard coded -- or the 
+job1-4 strings to be long file paths -- without
+having to generate huge lines or dynamicaly 
+build the job5-7 line.
+
+=head2 Overloading unalias for special job expansion.
+
+Up to this point all of the schedule processing has been
+handled automatically. There may be cases where specialized
+processing of the jobs may be simpler. One example is where
+the "jobs" are known to be data files being loaded into a 
+database, another is there the subroutine calls must come
+from an object other than the que itself.
+
+In this case the unalias or runjob methods can be overloaded.
+Because runjob will automatically handle calling subroutines
+within perl vs. passing strings to the shell, most of the
+overloading can be done in unalias.
+
+If unalias returns a code referent then it will be used to
+execute the code. One way to handle file processing for,
+say, rb_tmu loading dimension files before facts would be
+a schedule like:
+
+	dim1 = tmu_loader
+	dim2 = tmu_loader
+	dim3 = tmu_loader
+	fact1 = tmu_loader
+	fact2 = tmu_loader
+
+	fact2 fact1 : dim1 dim2 dim3
+
+This would call $que->tmu_loader( 'dim1' ), etc, allowing
+the jobs to be paths to files that need to be loaded.
+
+The problem with this approach is that the file names can
+change for each run, requiring more complicated code.
+
+In this case it may be easier to overload the unalias 
+method to process file names for itself. This might
+lead to the schedule:
+
+	fact2 fact1 : dim1 dim2 dim3
+
+and nothing more with unalias deciding what to do 
+with the files at runtime:
 
 	sub unalias
 	{
 		my $que = shift;
-		my $diskfile = shift;
+		my $datapath = shift;
 
-		my $tmufile = "$tmudir/$diskfile.tmu";
+		my $tmudir  = dirname $0;
+
+		my $filename = basename $datapath;
+
+		my $tmufile = dirname($0) . '/' . basename($datapath) . '.tmu';
 
 		-e $tmufile or croak "$$: Missing: $tmufile";
 
-		my $logfile = "$logdir/$diskfile.log";
+		# unzip zipped files, otherwise just redrect them 
 
-		# hand back the completed tmu command.
-		
-		"rb_tmu $tmufile \$RB_USER < $diskfile > $logfile 2>&1"
+		if( $datapath =~ /.gz$/ )
+		{
+			"gzip -dc $datapath | rb_ptmu $tmufile \$RB_USER"
+		}
+		else
+		{
+			"rb_tmu $tmufile \$RB_USER < $datapath"
+		}
+
+		# caller gets back one of the two command
+		# strings
 	}
 
-A more flexable unalias might decide if the file should
-be unzipped and piped or simply redirected and whether
-to zip the logfile as it is processed.
+
+In this case all the schedule needs to contain are 
+paths to the data files being loaded. The unalias
+method deals with all of the rest at runtime.
+
+Adding a method to the derived class for more complicated
+processing of the files (say moving the completed files 
+to an archive area and zipping them if necessary) could
+be handled by passing a closure:
+
+	sub unalias
+	{
+		my $que = shift;
+		my $datapath = shift;
+
+		-e $datapath or croak "$$: Nonexistint data file: $datapath";
+
+		# process the files, all further logic
+		# is dealt with in the loader sub.
+
+		sub { tmuload_method $datapath }
+	}
+
+Since code references are processed within perl this
+will not be passed to the shell. It will be run in the
+forked process, with the return value of tmuload_method
+being passed back to the parent process.
+
+Using an if-ladder various subroutines can be chosen
+from when the job is unaliased (in the parent) or in 
+the subroutine called (in the child).
+
+=head2 Aliases can pass shell variables. 
 
 Since the executed code is fork-execed it can contain any
 useful environment variables also:

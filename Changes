@@ -1,6 +1,75 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+0.11
+
+ - 	Stamped out some doc bugs. Mainly that the 
+ 	required argument is "sched" not "depend".
+
+ -	
+
+0.10 Thu Apr 11 14:16:40 CDT 2002
+
+ -	Update unlias to search for $que->can( $job ) or 
+	__PACKAGE__ . '::job', using closures to call
+	the method/sub with the aliased string as an
+	argument. This allows scheduling of methods or
+	subs by name without any modification to the 
+	S::D code.
+
+	The mechanism for finding sub's is to unalis the
+	jobname first, look for the ->can or CODE ref
+	and pass it the original jobname if it's found.
+
+	Thus:
+
+
+		abc : foo
+		xyz : foo
+		bar : foo
+
+		bar : abc xyz
+
+	to call foo('abc'), foo('xyz') and foo('bar').
+	This might be useful for, say, cleaning up multiple
+	directories. To pass more informaiton just use 
+	the arguments as hash keys into a package/global
+	value with the extra info.
+
+ -	Assigning an empty or 'PHONY' alias is a noop.
+ 	Thus:
+
+		foo =
+
+	or 
+
+		foo = PHONY
+
+	Will insert an immediate return of zero job into
+	the schedule. This is mainly to neaten things up:
+
+		foo =
+		
+		foo : long_named_job_one
+		foo : even_longer_named_job_two
+		foo : something_you_surely_do_not_want_to_type
+
+		bar : foo
+
+	now bar depends on all of the other three jobs without
+	the line-from-hell in the middle of a schedule. This can
+	also be handy for generating schedules on the fly, where
+	bar is a placeholder and the others are pushed onto a 
+	stack if they are needed.
+
+ -	Doc updates.
+
+
+0.09
+
+	Put the tarball into a tarball rahter than 
+	cpio archive, no change to the code.
+
 0.08 Fri Apr  5 10:10:08 CST 2002
 
  -	Added runjob to handle the result of unalias
@@ -47,13 +116,25 @@ Revision history for Perl extension Schedule::Depend
 	copies of the same file and schedule from 
 	different directories via soft link.
 
+	Revised exit status writing. The child uses
+	system instead of exec and writes $? to its
+	own pidfile; the parent writes $? to the pidfile
+	if it is non-zero. This allows either the parent
+	or child to get zapped by a signal, leave the
+	other running and correctly record the status.
+	It also means that the pidfiles may be 4 lines
+	long on failure. Fix there is to read [0..2]
+	to check the status on the way in for restarts.
+
+	Updated comments to reflect reality a bit better.
+
 0.06
 
 	Remove some of the extra newlines -- they aren't
 	required since individual job output goes to 
 	stdout/stderr files.
 
-	Shuffled verbose prints to a bit to give saner
+	Shuffled verobse prints to a bit to give saner
 	combinatins of output. At this point test.log 
 	should give a reasonable idea of what slient,
 	progress and detailed output look like.

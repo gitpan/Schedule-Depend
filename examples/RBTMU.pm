@@ -49,7 +49,7 @@ e.g.,
 	0
 	__END__
 
-=AUTHOR
+=head1 AUTHOR
 
 Steven Lembark
 slembark@knightsbridge.com
@@ -58,7 +58,7 @@ slembark@knightsbridge.com
 
 Same terms as Perl itself.
 
-=SEE ALSO
+=head1 SEE ALSO
 
 perl(1)
 

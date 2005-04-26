@@ -1,5 +1,16 @@
+
 Revision history for Perl extension Schedule::Depend
 (most recent first).
+
+2.4 Tue Apr 26 16:54:56 EDT 2005
+
+- Replaced use of internal "debug" que attribute with
+  "validate" to avoid conflict with "runsched" use of the
+  attribute (debugging a queue). This allows for:
+
+    $que->subque( %blah )->validate->execute;
+
+  when executing via runsched in debug mode.
 
 2.3 Sat Jan 15 10:17:11 EST 2005
 

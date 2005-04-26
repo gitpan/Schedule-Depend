@@ -727,11 +727,16 @@ sub sched_list
 	# compounding the parallel execution. for now 
 	# single-stream the thing.
 
-##?	my $name = "sched_list-$method";
-##?
-##?	my @sched = map { ( "$_ : ", "$_ = $method" ) } @$list;
+	if( 1 )
+	{
+		$que->$method( $_ ) for @$list;
+	}
+	else
+	{
+		my $name = "sched_list-$method";
 
-	$que->$method( $_ ) for @$list;
+		my @sched = map { ( "$_ : ", "$_ = $method" ) } @$list;
+	}
 
 	# caller gets back the method and list processed
 	# back as a string.
@@ -1354,6 +1359,10 @@ sub prepare
 #
 #	eval { S::D->prepare(%argz)->debug->execute };
 #
+# or
+#
+#	eval { $que->subque(%argz)->debug->execute };
+#
 # to debug and run the que in one pass since the debug will
 # abort execution by returning undef if it fails.
 #
@@ -1384,7 +1393,7 @@ sub validate
 			or die "Failed to generate tmp que for debug: $!";
 
 		$b->{attrib}{maxjob}	= 1;
-		$b->{attrib}{debug}		= 1;
+		$b->{attrib}{validate}	= 1;
 		$b->{attrib}{nofork}	= 0;
 
 		$b->execute;
@@ -1446,7 +1455,7 @@ sub execute
 	# logs have a start/completion message in them
 	# at least.
 
-	if( $attrib->{debug} )
+	if( $attrib->{validate} )
 	{
 		print STDERR "$$: Beginning Debugging";
 		print "$$: Debugging:\n", Dumper $que
@@ -1578,13 +1587,13 @@ sub execute
 				# nofork actually runs the jobs and is intended
 				# for debugging.
 
-				if( $attrib->{debug} )
+				if( $attrib->{validate} )
 				{
 					print "$$: Debugging: $jobid\n"
 						if $print_progress;
 
 					print "$$: Checking $que->{idstring}{$job}"
-						if $attrib->{debug};
+						if $attrib->{validate};
 
 					$que->dequeue( $job );
 
@@ -1937,8 +1946,8 @@ sub execute
 		}
 	}
 
-	print $attrib->{debug} ?
-		"$$: Debugging Completed." :
+	print $attrib->{validate} ?
+		"$$: Validation Completed." :
 		"$$: Execution Completed.";
 
 	# avoid running the que multiple times. simpler to

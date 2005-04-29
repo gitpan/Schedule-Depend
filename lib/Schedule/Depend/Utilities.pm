@@ -12,7 +12,7 @@ package Schedule::Depend::Utilities;
 use strict;
 use warnings;
 
-our $VERSION=0.90;
+our $VERSION=0.91;
 
 use Carp;
 
@@ -51,6 +51,8 @@ qw(
 	log_message
 	log_error
 	log_format
+
+    handle_que_args
 
 	send_mail
 	nastygram
@@ -309,6 +311,35 @@ sub nastygram
 
 	die send_mail $mailargz;
 }
+
+########################################################################
+# generic argument handler. this can be called from anything queued
+# to get back the que or config objects:
+#
+#   my ( $config ) = &handle_que_args;
+#
+# or
+#
+#   my ( $que, $config ) = &handle_que_args;
+########################################################################
+
+sub handle_que_args
+{
+    my $caller = (caller 1)[3];
+
+    my $que = shift
+        or croak "Bogus $caller: missing queue object";
+
+    log_message "Entering: $caller", \@_;
+
+    my $config = $que->moduleconfig
+        or croak "Bogus $caller: no configuration information";
+
+    $DB::single = 1 if $que->debug;
+
+    ( $que, $config )
+};
+
 
 ########################################################################
 # directory operations

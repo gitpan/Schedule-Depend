@@ -2,6 +2,27 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+2.5 Fri Apr 29 19:48:08 EDT 2005
+
+- Added S::D::U::handle_que_args
+
+    Allows que methods to use:
+
+        my ( $que, $config ) = &handle_args;
+
+    or
+
+        my ( $config ) = &handle_args;
+
+    and yanks $que off of the stack. It also sets
+    $DB::single = 1 if $que->debug (i.e., automatic
+    breakpoint in debug mode) and logs the caller, 
+    arguments.
+
+    This replaces the top few lines of nearly every 
+    que method.
+        
+
 2.4 Tue Apr 26 16:54:56 EDT 2005
 
 - Replaced use of internal "debug" que attribute with

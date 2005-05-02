@@ -2,6 +2,31 @@
 Revision history for Perl extension Schedule::Depend
 (most recent first).
 
+
+2.6 Mon May  2 13:08:59 EDT 2005
+
+- Utilities::handle_que_args passes in the caller's
+  package space to moduleconfig, which now checks 
+  the argument before blindly using "caller" to get
+  the global/local configuration.
+
+  This also simplifies re-cycling metadata in the 
+  defaults hash by allowing code in multiple packages
+  to access the same local configuration information.
+
+  Aside: Next step will be having module config use
+  multiple arguments to overlay the arguments so that
+  code can share multiple groups of metadata. stay
+  tuned...
+
+- Config::moduleconfig takes an optional argument of
+  the package name to use for finding global, local
+  configuration information.
+  
+  Note: this does not affect any existing code.
+
+- POD updates.
+
 2.5 Fri Apr 29 19:48:08 EDT 2005
 
 - Added S::D::U::handle_que_args

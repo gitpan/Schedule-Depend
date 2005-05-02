@@ -21,7 +21,7 @@ package Schedule::Depend::Config;
 use strict;
 use warnings;
 
-our $VERSION=0.40;
+our $VERSION=0.41;
 
 ########################################################################
 # deal with the config hash
@@ -113,11 +113,21 @@ sub moduleconfig
 
 	my $valuz = $config->{user} || $config;
 
-	# the caller gets the global values from the 
-	# config hash overridden by module-specific
-	# ones.
+	# the caller gets the global values from the config
+    # hash overridden by module-specific ones.
+    #
+    # handle_que_args has to call this in the context
+    # of its caller and passes a package in as an 
+    # argument. this can also be used to recycle arg's
+    # trough various classes.
+    #
+    # they can also override the global settings by
+    # setting $config->{global} to the value of a key
+    # in $config.
 
-	my ( $global, $local ) = (split /::/, caller)[0,-1];
+    my $caller = shift || caller;
+
+	my ( $global, $local ) = (split /::/, $caller)[0,-1];
 
 	$global = $valuz->{global} if $valuz->{global};
 
@@ -164,13 +174,80 @@ hash.
 
 =head1 SYNOPSIS
 
-	sub sd_job
+    %Schedule::Depend::Execute::defaults =
+    (
+        Foo => 
+        {
+            # global configuration
+        },
+
+        Bar =>
+        {
+            # local configuration
+        },
+
+        Bletch =>
+        {
+            # local configuration
+        },
+
+    );
+
+    package Foo::More::Stuff::Bar;
+
+	sub something
 	{
 		my $que = shift;
+
+        # $config is result of @{S::D::E::defaults}{qw(FOO BAR)}
+
 		my $config = $que->{user}->moduleconfig;
+
+        my $arg = shift;
 
 		...
 	}
+
+    package Foo::Other::Stuff::Bletch
+    
+    sub something_else
+    {
+		my $que = shift;
+
+        # $config is result of @{S::D::E::defaults}{qw(FOO BLETCH)}
+
+		my $config = $que->{user}->moduleconfig;
+
+        my $arg = shift;
+
+        ...
+    }
+
+    package Foo::Someproj;
+
+    sub yet_another
+    {
+        my $que = shift;
+
+        # Read metadata from Foo (global) and Bletch (local).
+
+        $config = $que->{user}->moduleconfig( 'Foo::Bletch' );
+    }
+
+or
+    package Foo::Blort;
+
+    use Schedule::Depend::Utilities;
+
+    sub this
+    {
+        # get que and configs in one step.
+
+        my( $que, $config ) = &handle_que_args;
+
+        my $arg = shift;
+    }
+
 
 =head1 DESCRIPTION
 
@@ -275,7 +352,26 @@ and local data from "Upload".
 
 =head1 SEE ALSO
 
-Schedule::Depend Schedule::Depend::Execute
+=over 4
+
+=item Schedule::Depend
+
+Definition of que object and schedule.
+
+=item Schedule::Depend::Execute
+
+runsched (top-level call for #! code).
+
+=item Schedule::Depend::Utilities
+
+handle_que_args simplifies getting the arguments.
+
+=item NEXT::init
+
+DWIM data inheritence simplifies setting up default
+data hashes via data inheritence.
+
+=back
 
 =head1 KNOWN BUGS
 
@@ -283,7 +379,9 @@ None, yet.
 
 =head1 2DO
 
-Add the global and local sections as paramters to moduleconfig.
+Iterate the arguments to allow a subroutine to call
+moduleconfig with multiple package arguments for 
+data sharing between packages.
 
 =head1 AUTHOR
 

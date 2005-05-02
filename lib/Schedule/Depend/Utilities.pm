@@ -12,7 +12,7 @@ package Schedule::Depend::Utilities;
 use strict;
 use warnings;
 
-our $VERSION=0.91;
+our $VERSION=0.92;
 
 use Carp;
 
@@ -325,15 +325,21 @@ sub nastygram
 
 sub handle_que_args
 {
-    my $caller = (caller 1)[3];
+    # catch: the debugger adds a level onto the stack,
+    # which can make things a bit flakey here. 
+    # fix is to walk up the caller tree until something
+    # isn't in Schedule::Depend.
+
+    my $pkg = (caller 0)[0];
+    my $sub = (caller 1)[3];
 
     my $que = shift
-        or croak "Bogus $caller: missing queue object";
+        or croak "Bogus $sub: missing queue object";
 
-    log_message "Entering: $caller", \@_;
+    log_message "Entering: $sub", \@_;
 
-    my $config = $que->moduleconfig
-        or croak "Bogus $caller: no configuration information";
+    my $config = $que->moduleconfig( $pkg )
+        or croak "Bogus $sub: no configuration information";
 
     $DB::single = 1 if $que->debug;
 
@@ -630,7 +636,38 @@ Kitchen-sink module for configuratin, logging, whatever...
 
 	nastygram @message;
 
-	
+
+Automate stack, configuration handling:
+
+    use Schedule::Depend::Utilities;
+
+    sub this
+    {
+        # get que and configs in one step.
+
+        my( $que, $config ) = &handle_que_args;
+
+        my $arg = shift;
+    }
+
+    sub that
+    {
+        # doesn't need a que so just get configs.
+
+        my( $config ) = &handle_que_args;
+
+        my $arg = shift;
+    }
+
+    sub other
+    {
+        # doesn't need either, just clean off the stack
+
+        &handle_que_args;
+
+        my $arg = shift;
+    }
+
 
 =head1 DESCRIPTION
 
